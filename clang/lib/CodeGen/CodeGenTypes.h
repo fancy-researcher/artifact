@@ -129,6 +129,8 @@ public:
 
   /// ConvertType - Convert type T into a llvm::Type.
   llvm::Type *ConvertType(QualType T);
+  void updateCastingRelatedTypeIntoFile1(QualType SrcTy, bool isDerived);
+  void updateCastingRelatedTypeIntoFile2(QualType SrcTy, bool isDerived);
 
   /// ConvertTypeForMem - Convert type T into a llvm::Type.  This differs from
   /// ConvertType in that it is used to convert to the memory representation for

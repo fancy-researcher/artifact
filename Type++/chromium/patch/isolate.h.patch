@@ -1,0 +1,18 @@
+--- chro3/v8/src/execution/isolate.h	2022-08-30 14:42:06.113088557 +0200
++++ chro2/v8/src/execution/isolate.h	2022-08-17 15:44:42.000000000 +0200
+@@ -960,12 +960,14 @@
+     return name##_;                                              \
+   }                                                              \
+   inline void set_##name(type value) {                           \
+-    DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_); \
+     name##_ = value;                                             \
+   }
+   ISOLATE_INIT_LIST(GLOBAL_ACCESSOR)
+ #undef GLOBAL_ACCESSOR
+ 
++// Ncolas removed at line 963, above nmae##_ = value;
++// DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_);
++
+ #define GLOBAL_ARRAY_ACCESSOR(type, name, length)                \
+   inline type* name() {                                          \
+     DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_); \

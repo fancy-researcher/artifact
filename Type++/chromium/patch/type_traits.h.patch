@@ -1,0 +1,17 @@
+--- chro3/third_party/abseil-cpp/absl/meta/type_traits.h	2022-08-30 14:42:04.417096772 +0200
++++ chro2/third_party/abseil-cpp/absl/meta/type_traits.h	2022-07-18 13:55:41.000000000 +0200
+@@ -419,12 +419,12 @@
+   static constexpr bool compliant =
+       std::is_trivially_copy_constructible<T>::value ==
+       is_trivially_copy_constructible::value;
+-  static_assert(compliant || std::is_trivially_copy_constructible<T>::value,
++  /*static_assert(compliant || std::is_trivially_copy_constructible<T>::value,
+                 "Not compliant with std::is_trivially_copy_constructible; "
+                 "Standard: false, Implementation: true");
+   static_assert(compliant || !std::is_trivially_copy_constructible<T>::value,
+                 "Not compliant with std::is_trivially_copy_constructible; "
+-                "Standard: true, Implementation: false");
++                "Standard: true, Implementation: false");*/
+ #endif  // ABSL_HAVE_STD_IS_TRIVIALLY_CONSTRUCTIBLE
+ };
+ 

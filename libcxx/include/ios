@@ -374,6 +374,7 @@ private:
     iostate         __exceptions_;
     void*           __rdbuf_;
     void*           __loc_;
+    void*           __loc_2;
     event_callback* __fn_;
     int*            __index_;
     size_t          __event_size_;

@@ -1,0 +1,13 @@
+HexType Repetitive insertion: 653ms, 2.51154 ns/ops
+HexType Repetitive lookup: 1708ms, 0.6832 ns/ops
+HexType Repetitive cast success: 2822ms, 1.1288 ns/ops
+HexType Repetitive cast success complex: 3393ms, 1.3572 ns/ops
+HexType Repetitive deletion: 1474ms, 5.66923 ns/ops
+HexType Linear insertion: 4985ms, 19.1731 ns/ops
+HexType Linear lookup: 5646ms, 2.2584 ns/ops
+HexType Linear cast success: 7211ms, 2.8844 ns/ops
+HexType Linear cast success complex: 6864ms, 2.7456 ns/ops
+HexType Linear deletion: 837ms, 3.21923 ns/ops
+type++ repetitive complex: 2105ms, 0.842 ns/ops
+type++ linear complex: 1661ms, 0.6644 ns/ops
+

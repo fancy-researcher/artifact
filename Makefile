@@ -1,0 +1,39 @@
+LLVM_DIR=${LLVM_FOLDER}/llvm
+
+hexasn:
+	mkdir -p ${BUILD_DIR}
+	
+	(cd ${BUILD_DIR} && \
+	  cmake -G "Ninja"\
+	  -DCMAKE_BUILD_TYPE=${LLVM_DEBUG} \
+	  -DCMAKE_C_COMPILER=clang-12 \
+	  -DCMAKE_CXX_COMPILER=clang++-12 \
+		-DHAVE_RPC_XDR_H=0 \
+	  -DLLVM_ENABLE_ASSERTIONS=OFF \
+	  -DLLVM_BINUTILS_INCDIR="${LLVM_FOLDER}/binutils/include" \
+	  -DLLVM_BUILD_TESTS=OFF \
+		-DLLVM_BUILD_EXAMPLES=ON \
+		-DCLANG_BUILD_EXAMPLES=ON \
+	  -DLLVM_INCLUDE_TESTS=OFF\
+	  -DLLVM_INCLUDE_EXAMPLES=ON \
+	  -DLLVM_TARGETS_TO_BUILD="X86" \
+	  -DLLVM_USE_SPLIT_DWARF=ON \
+	  -DLLVM_OPTIMIZED_TABLEGEN=ON \
+	  -DBUILD_SHARED_LIBS=OFF \
+		-DCMAKE_POLICY_DEFAULT_CMP0114=OLD \
+		-DCMAKE_POLICY_DEFAULT_CMP0116=OLD \
+		-DCMAKE_CXX_KNOWN_FEATURES=cxx_relaxed_constexpr \
+		-DLLVM_ENABLE_PROJECTS="clang;compiler-rt;libcxxabi;libcxx" \
+		-DLLVM_USE_SANITIZER=${LLVM_ASAN}  \
+		-DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+	${LLVM_DIR})
+	(ninja -C ${BUILD_DIR})
+	(cd ${BUILD_DIR})
+
+test:
+	(cd ${BUILD_DIR} && ninja check-asan)
+
+clean:
+	rm -rf ${BUILD_DIR}
+
+.PHONY: hexasn test clean

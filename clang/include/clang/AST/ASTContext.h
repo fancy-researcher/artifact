@@ -73,6 +73,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <set>
 
 namespace llvm {
 
@@ -288,6 +289,9 @@ class ASTContext : public RefCountedBase<ASTContext> {
 
   /// Mapping from __block VarDecls to BlockVarCopyInit.
   llvm::DenseMap<const VarDecl *, BlockVarCopyInit> BlockVarCopyInits;
+
+  std::set<std::string> ClassesToInstrument;
+  bool ReadClasses = false;
 
   /// Mapping from GUIDs to the corresponding MSGuidDecl.
   mutable llvm::FoldingSet<MSGuidDecl> MSGuidDecls;

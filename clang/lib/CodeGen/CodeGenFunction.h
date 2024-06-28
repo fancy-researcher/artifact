@@ -41,6 +41,7 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/SanitizerStats.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 namespace llvm {
 class BasicBlock;
@@ -103,6 +104,14 @@ class RegionCodeGenTy;
 class TargetCodeGenInfo;
 struct OMPTaskDataTy;
 struct CGCoroData;
+
+enum class AllocatorType {
+  NOT_ALLOCATOR,
+  POOL_ALLOCATOR,
+  ALLOCATOR,
+};
+typedef std::pair<llvm::Value*, llvm::Value*> OffsetAndNbrObject;
+typedef std::pair<AllocatorType, int8_t> AllocatorTypeAndMetaDataSize;
 
 /// The kind of evaluation to perform on values of a particular
 /// type.  Basically, is the code in CGExprScalar, CGExprComplex, or
@@ -374,6 +383,10 @@ public:
   /// AllocaInsertPoint - This is an instruction in the entry block before which
   /// we prefer to insert allocas.
   llvm::AssertingVH<llvm::Instruction> AllocaInsertPt;
+  typedef std::set<uint64_t> HashSet;
+  llvm::HexTypeCommonUtil HexTypeUtil;
+  std::map<uint64_t, HashSet*> TypeParentInfo;
+  std::map<uint64_t, HashSet*> TypePhantomInfo;
 
   /// API for captured statement code generation.
   class CGCapturedStmtInfo {
@@ -2851,7 +2864,8 @@ public:
                                   Address ArrayPtr,
                                   const CXXConstructExpr *E,
                                   bool NewPointerIsChecked,
-                                  bool ZeroInitialization = false);
+                                  bool ZeroInitialization = false,
+                                  bool isTypePPRequired = false);
 
   static Destroyer destroyCXXObject;
 
@@ -2875,6 +2889,8 @@ public:
   llvm::Value *EmitLifetimeStart(llvm::TypeSize Size, llvm::Value *Addr);
   void EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr);
 
+  void storeTypeRelationInfo(const CXXRecordDecl *, const CXXRecordDecl *);
+  void insertTypeRelationInfo(uint64_t, uint64_t, std::map<uint64_t, HashSet*> &);
   llvm::Value *EmitCXXNewExpr(const CXXNewExpr *E);
   void EmitCXXDeleteExpr(const CXXDeleteExpr *E);
 
@@ -3954,6 +3970,12 @@ public:
   RValue EmitCallExpr(const CallExpr *E,
                       ReturnValueSlot ReturnValue = ReturnValueSlot());
   RValue EmitSimpleCallExpr(const CallExpr *E, ReturnValueSlot ReturnValue);
+  static int8_t needsHeaderSpace(std::string fun_name, std::string class_name);
+  void printMallocInfo(std::string fmt, std::vector<llvm::Value*> printArgs);
+  OffsetAndNbrObject numberOfConstructorCall(llvm::CallBase* callToMalloc, llvm::Type* allocatedType, AllocatorType allocatorType, int8_t needsHeaderSpace);
+  static AllocatorTypeAndMetaDataSize isAllocatorCast(Stmt *CurStmt);
+  static bool isPoolCustomAllocator(std::string fun_name, std::string class_name);
+  static bool isCustomAllocator(std::string fun_name, std::string class_name);
   CGCallee EmitCallee(const Expr *E);
 
   void checkTargetFeatures(const CallExpr *E, const FunctionDecl *TargetDecl);
@@ -4028,6 +4050,9 @@ public:
                                QualType ImplicitParamTy, const CallExpr *E);
   RValue EmitCXXMemberCallExpr(const CXXMemberCallExpr *E,
                                ReturnValueSlot ReturnValue);
+void InsertVptrForUnion(const Expr *LHS,
+                                               const Expr *RHS, bool IsArrow,
+   const Expr *Base);
   RValue EmitCXXMemberOrOperatorMemberCallExpr(const CallExpr *CE,
                                                const CXXMethodDecl *MD,
                                                ReturnValueSlot ReturnValue,

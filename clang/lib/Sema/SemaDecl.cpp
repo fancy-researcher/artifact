@@ -49,6 +49,7 @@
 #include <cstring>
 #include <functional>
 #include <unordered_map>
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 using namespace clang;
 using namespace sema;
@@ -16548,6 +16549,64 @@ void Sema::ActOnTagFinishDefinition(Scope *S, Decl *TagD,
   TagDecl *Tag = cast<TagDecl>(TagD);
   Tag->setBraceRange(BraceRange);
 
+  // To define and declare constructor
+  if (isa<CXXRecordDecl>(TagD)) {
+    CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(TagD);
+    // VTable: Define and declare default constructor if target type does not have this
+    // TODO(Jeon): need to check "Record->isDependentType()"
+    bool debug = false;
+
+    if(getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClVtableStandard) {
+      bool needExitPrint = false;
+      if(Record->isForcePoly()) {
+        if (Record && (Record->isStruct() || Record->isClass()) && !Record->isBeingDefined()) {
+          std::list<CXXConstructorDecl*> defaultConst = {};
+          std::list<CXXConstructorDecl*> defaultedConst = {};
+          for (auto *M : Record->methods()) {
+            if (CXXConstructorDecl *target = dyn_cast<CXXConstructorDecl>(M)) {
+              if (target->isDefaultConstructor()) {
+                defaultConst.push_back(target);
+              }
+              if (target->isDefaulted()) {
+                defaultedConst.push_back(target);
+              }
+            }
+          }
+          if (debug) {
+            llvm::errs() << "# default Const: " << defaultConst.size() << "\n"; 
+            llvm::errs() << "# defaulted Const: " << defaultedConst.size() << "\n";
+          }
+          if(!Record->isDependentType()) {
+            if (debug) {
+              printCtor("Entry Non Template constructor instantiation: ", Record, debug, true);
+              needExitPrint = true;
+            }
+            if(defaultConst.empty()) { // no default const
+              CXXConstructorDecl* target = DeclareImplicitDefaultConstructor(Record);
+              printCtor("Non Template: declared", Record, debug, true, target);
+              if(!target->doesThisDeclarationHaveABody() && !target->isDeleted()){
+                TypePPDefineImplicitDefaultConstructor(Record->getLocation(), target);
+                printCtor("Non Template: declared + defined", Record, debug, true, target);
+              } else {
+                llvm::errs() << "UNEXPECTED OHHH NO; OHHHH NOOONONONO\n";
+              }
+            } else if(defaultConst.size() > 1) {
+              llvm::errs() << "UNEXPECTED Multiple default const\n";
+            } else {
+              // found 1 default const
+              if(debug) {
+                llvm::errs() << "Found 1 default. Defaulted " << defaultedConst.size() <<"\n";
+              }
+            }
+          }
+        }
+      }
+      if (debug && needExitPrint) {
+        llvm::errs()<<"Exit Non Template constructor instantiation\n------\n";
+      }
+    }
+  }
+
   // Make sure we "complete" the definition even it is invalid.
   if (Tag->isBeingDefined()) {
     assert(Tag->isInvalidDecl() && "We should already have completed it");
@@ -16962,8 +17021,10 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
           // destructor, or a non-trivial copy assignment operator
           // cannot be a member of a union, nor can an array of such
           // objects.
-          if (CheckNontrivialField(NewFD))
-            NewFD->setInvalidDecl();
+          if (!getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+            if (CheckNontrivialField(NewFD))
+              NewFD->setInvalidDecl();
+          }
         }
       }
 
@@ -17055,10 +17116,12 @@ bool Sema::CheckNontrivialField(FieldDecl *FD) {
           }
         }
 
-        Diag(FD->getLocation(), getLangOpts().CPlusPlus11 ?
+        if (!getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+          Diag(FD->getLocation(), getLangOpts().CPlusPlus11 ?
                diag::warn_cxx98_compat_nontrivial_union_or_anon_struct_member :
                diag::err_illegal_union_or_anon_struct_member)
-          << FD->getParent()->isUnion() << FD->getDeclName() << member;
+            << FD->getParent()->isUnion() << FD->getDeclName() << member;
+        }
         DiagnoseNontrivial(RDecl, member);
         return !getLangOpts().CPlusPlus11;
       }

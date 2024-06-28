@@ -1308,6 +1308,8 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
   const SanitizerArgs &Sanitize = getSanitizerArgs();
   if (Sanitize.needsAsanRt())
     AddLinkSanitizerLibArgs(Args, CmdArgs, "asan");
+  if (Sanitize.needsTypePlusRt())
+    AddLinkSanitizerLibArgs(Args, CmdArgs, "typeplus");
   if (Sanitize.needsLsanRt())
     AddLinkSanitizerLibArgs(Args, CmdArgs, "lsan");
   if (Sanitize.needsUbsanRt())

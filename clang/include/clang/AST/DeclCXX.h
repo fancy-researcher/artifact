@@ -16,6 +16,7 @@
 #define LLVM_CLANG_AST_DECLCXX_H
 
 #include "clang/AST/ASTUnresolvedSet.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclarationName.h"
@@ -50,6 +51,7 @@
 #include <iterator>
 #include <memory>
 #include <vector>
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 namespace clang {
 
@@ -465,6 +467,7 @@ class CXXRecordDecl : public RecordDecl {
   /// This routine helps maintain information about the class based on which
   /// members have been added. It will be invoked by DeclContext::addDecl()
   /// whenever a member is added to this record.
+  bool isOpt();
   void addedMember(Decl *D);
 
   void markedVirtualFunctionPure();
@@ -1156,7 +1159,14 @@ public:
 
   /// Whether this class is polymorphic (C++ [class.virtual]),
   /// which means that the class contains or inherits a virtual function.
-  bool isPolymorphic() const { return data().Polymorphic; }
+  /// VTable: forcibly return true although target object is not polymorphic
+  bool isPolymorphic() const {
+    if(getASTContext().getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClWrongPolymorphism && llvm::ClPolyClasses)
+      if ((this->isClass() || this->isStruct()) && !this->isStandardLayout() && !data().Polymorphic) {
+        return true;
+    }
+    return data().Polymorphic;
+  }
 
   /// Determine whether this class has a pure virtual function.
   ///
@@ -1164,6 +1174,8 @@ public:
   /// a pure virtual function or inherits a pure virtual function that is
   /// not overridden.
   bool isAbstract() const { return data().Abstract; }
+
+  bool isForcePoly() const { return data().ForcePolymorphic; }
 
   /// Determine whether this class is standard-layout per
   /// C++ [class]p7.

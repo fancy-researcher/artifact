@@ -3164,6 +3164,9 @@ public:
 
   typedef void *SkippedDefinitionContext;
 
+  static void printCtor(StringRef message, const CXXRecordDecl* Record, bool debug = false, bool dump=false, CXXMethodDecl* target=nullptr) {
+  };
+
   /// Invoked when we enter a tag definition that we're skipping.
   SkippedDefinitionContext ActOnTagStartSkippedDefinition(Scope *S, Decl *TD);
 
@@ -5959,6 +5962,8 @@ public:
   /// DefineImplicitDefaultConstructor - Checks for feasibility of
   /// defining this constructor as the default constructor.
   void DefineImplicitDefaultConstructor(SourceLocation CurrentLocation,
+                                        CXXConstructorDecl *Constructor);
+  void TypePPDefineImplicitDefaultConstructor(SourceLocation CurrentLocation,
                                         CXXConstructorDecl *Constructor);
 
   /// Declare the implicit destructor for the given class.

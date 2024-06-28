@@ -17,9 +17,12 @@
 #include "CodeGenFunction.h"
 #include "ConstantEmitter.h"
 #include "TargetInfo.h"
+#include "clang/AST/Expr.h"
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -205,6 +208,136 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
       CE, MD, ReturnValue, HasQualifier, Qualifier, IsArrow, Base);
 }
 
+void CodeGenFunction::InsertVptrForUnion(const Expr *LHS,
+                                               const Expr *RHS, bool IsArrow,
+    const Expr *Base) {
+  if(!llvm::ClVtableStandard && CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus))
+    return;
+  // We need to trigger vptr insertion for all the union in the chain of
+  //access (a.u.x.u2.y -> u and u2 must be set) as we cannot know in advance if
+  //the union already had this type or not. This is not possible with a
+  //constructor call as it would reset all the fields already set if the type was
+  //already correct. 
+  return; 
+  bool isConstructorCallNeeded = false;
+
+  CXXRecordDecl *TargetInitDecl;
+  bool debug = true; // SrcR->getType() == Builder.getInt1Ty();;
+  if(!isa<MemberExpr>(LHS)) {
+
+    llvm::errs() << "ERRS. not memebrexpr\n";
+    return;
+  }
+  const MemberExpr *oldME = dyn_cast<MemberExpr>(LHS);
+  const Expr* newLHS = LHS;
+  if (const MemberExpr *ME = dyn_cast<MemberExpr>(newLHS)) {
+    FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl());
+    CXXRecordDecl *RD = FD->getType()->getAsCXXRecordDecl();
+    if (RD && RD->isForcePoly()) {
+      llvm::errs() << "RD\n";
+      RD->dumpColor();
+      if (RecordDecl *TargetDecl = FD->getParent()) {
+      llvm::errs() << "TD\n";
+      TargetDecl->dumpColor();
+        if (TargetDecl->isUnion()) {
+          TargetInitDecl = RD;
+          isConstructorCallNeeded = true;
+            if(debug) {
+              llvm::errs() << "LHS\n";
+              LHS->dumpColor();
+              llvm::errs() << "RHS\n";
+              RHS->dumpColor();
+              llvm::errs() << "Base\n";
+              Base->dumpColor();
+            }
+        }
+      }
+    }
+    oldME = ME;
+    newLHS = ME->getBase()->IgnoreParenCasts();
+  }
+  if (isConstructorCallNeeded) { // Union on LHS
+  if(debug) {
+    llvm::errs() << "LHS\n";
+    newLHS->dumpColor();
+  }
+    if (const CXXRecordDecl *DerivedClassDecl =
+            dyn_cast<CXXRecordDecl>(TargetInitDecl)) {
+      // VTable: Just return when target object type is not appropriate
+      if (DerivedClassDecl->hasDefinition() &&
+          ((DerivedClassDecl->isClass() || DerivedClassDecl->isStruct())) &&
+          DerivedClassDecl->isForcePoly()) {
+
+ //       // VTable: Try to find constructor calls
+        for (CXXMethodDecl *MD :
+             llvm::make_range(DerivedClassDecl->method_begin(),
+                              DerivedClassDecl->method_end()))
+          if (CXXConstructorDecl *target = dyn_cast<CXXConstructorDecl>(MD)) {
+            if (target->isDefaultConstructor()) {
+ //             std::vector<Expr *> argsVec(0);
+ //             for (uint i = 0; i < target->getNumParams(); i++) {
+ //               argsVec.emplace_back(target->getParamDecl(i)->getDefaultArg());
+ //             }
+
+
+ //           LValue This;
+ //           if (IsArrow) {
+ //             LValueBaseInfo BaseInfo;
+ //             TBAAAccessInfo TBAAInfo;
+ //             Address ThisValue = EmitPointerWithAlignment(Base, &BaseInfo, &TBAAInfo);
+ //             This = MakeAddrLValue(ThisValue, Base->getType(), BaseInfo, TBAAInfo);
+ //           } else {
+ //             This = EmitLValue(Base);
+ //           }
+
+ //   // This is the MSVC p->Ctor::Ctor(...) extension. We assume that's
+ //   // constructing a new complete object of type Ctor.
+ //   CallArgList Args;
+ //   commonEmitCXXMemberOrOperatorCall(
+ //       *this, target, This.getPointer(*this), /*ImplicitParam=*/nullptr,
+ //       /*ImplicitParamTy=*/QualType(), CE, Args, nullptr);
+
+
+ //             ArrayRef<Expr *> Args = llvm::makeArrayRef(argsVec);
+
+ //             // GlobalDecl GD(target, Ctor_Base);
+ //             // llvm::FunctionCallee initFunction =
+ //             // CGM.getAddrAndTypeOfCXXStructor(GD);
+
+
+ //             CXXConstructExpr *cee = CXXConstructExpr::Create(
+ //                 getContext(),
+ //                 DerivedClassDecl->getTypeForDecl()->getCanonicalTypeInternal(),
+ //                 LHS->getExprLoc(), target, false, Args, false, false, false,
+ //                 false, CXXConstructExpr::ConstructionKind::CK_Complete,
+ //                 LHS->getSourceRange());
+
+ //             LValue lv = EmitMemberExpr(oldME);
+ //             Address addr = lv.getAddress(*this);
+ //             AggValueSlot avs = AggValueSlot::forAddr(
+ //                 addr, Qualifiers(), AggValueSlot::IsDestructed,
+ //                 AggValueSlot::DoesNotNeedGCBarriers, AggValueSlot::IsAliased,
+ //                 AggValueSlot::DoesNotOverlap);
+
+ //             EmitCXXConstructorCall(target, Ctor_Base, false, false, avs, cee);
+ //   EmitCXXConstructorCall(target, Ctor_Complete, /*ForVirtualBase=*/false,
+ //                          /*Delegating=*/false, This.getAddress(*this), Args,
+ //                          AggValueSlot::DoesNotOverlap, RHS->getExprLoc(),
+ //                          /*NewPointerIsChecked=*/false);
+
+              if (debug) {
+                llvm::errs() << "Found union constructor "
+                             << target->getNameAsString() << "\n";
+ //               LHS->dumpColor();
+ //               llvm::errs() << *Builder.GetInsertBlock() << "\n";
+              }
+            }
+          }
+      }
+    }
+  }
+}
+
 RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
     const CallExpr *CE, const CXXMethodDecl *MD, ReturnValueSlot ReturnValue,
     bool HasQualifier, NestedNameSpecifier *Qualifier, bool IsArrow,
@@ -257,6 +390,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
   LValue TrivialAssignmentRHS;
   if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(CE)) {
     if (OCE->isAssignmentOp()) {
+      InsertVptrForUnion(CE->getArg(0), CE->getArg(1), IsArrow, Base);
       if (TrivialAssignment) {
         TrivialAssignmentRHS = EmitLValue(CE->getArg(1));
       } else {
@@ -1484,6 +1618,68 @@ namespace {
   };
 }
 
+void CodeGenFunction::insertTypeRelationInfo(uint64_t TargetHashValue, uint64_t ParentHashValue,
+                                             std::map<uint64_t, HashSet*> &TargetStorage) {
+  HashSet *TargetSet;
+  bool isExist = true;
+  auto it = TargetStorage.find(TargetHashValue);
+
+  if (it == TargetStorage.end()) {
+    isExist = false;
+    TargetSet = new HashSet();
+  }
+  else
+    TargetSet = it->second;
+
+  TargetSet->insert(ParentHashValue);
+  if (!isExist)
+    TargetStorage.insert(make_pair(TargetHashValue, TargetSet));
+}
+
+void CodeGenFunction::storeTypeRelationInfo(const CXXRecordDecl *TargetDecl,
+                                  const CXXRecordDecl *ParentDecl)
+                                  {
+  if ((!TargetDecl) || !TargetDecl->isCompleteDefinition() ||
+      !TargetDecl->hasDefinition() || TargetDecl->isAnonymousStructOrUnion()) {
+        printf("getTypeRelationInfo return\n");
+    return;
+  }
+
+  std::string TargetStr = TargetDecl->getName().str();
+  std::string ParentStr = ParentDecl->getName().str();
+  uint64_t TargetHashValue = HexTypeUtil.getHashValueFromStr(TargetStr);
+  uint64_t ParentHashValue = HexTypeUtil.getHashValueFromStr(ParentStr);
+
+  if (TargetDecl != ParentDecl &&
+      TargetHashValue != 0 && ParentHashValue != 0) {
+    const ASTRecordLayout &TargetLayout =
+      CGM.getContext().getASTRecordLayout(TargetDecl);
+    const ASTRecordLayout &ParentLayout =
+      CGM.getContext().getASTRecordLayout(ParentDecl);
+    // TODO NICOLAS we break phantom cast if only one is instrumented. whad to do?
+    if (TargetLayout.getDataSize() == ParentLayout.getDataSize()) {
+      insertTypeRelationInfo(TargetHashValue, ParentHashValue, TypePhantomInfo);
+      insertTypeRelationInfo(ParentHashValue, TargetHashValue, TypePhantomInfo);
+    }
+    insertTypeRelationInfo(TargetHashValue, ParentHashValue, TypeParentInfo);
+  }
+
+  // CharUnits OffsetCU;
+  for (const auto &Base : ParentDecl->bases()) {
+    QualType FieldType = CGM.getContext().getBaseElementType(Base.getType());
+    const CXXRecordDecl *BaseDecl = FieldType->getAsCXXRecordDecl();
+    if (!BaseDecl)
+      continue;
+    if (BaseDecl && BaseDecl->isCompleteDefinition() &&
+        BaseDecl->hasDefinition() &&
+        !BaseDecl->isAnonymousStructOrUnion()) {
+      // std::string dstStr = BaseDecl->getName().str();
+      storeTypeRelationInfo(TargetDecl, BaseDecl);
+      storeTypeRelationInfo(ParentDecl, BaseDecl);
+    }
+  }
+}
+
 /// Enter a cleanup to call 'operator delete' if the initializer in a
 /// new-expression throws.
 static void EnterNewDeleteCleanup(CodeGenFunction &CGF,
@@ -1772,6 +1968,15 @@ llvm::Value *CodeGenFunction::EmitCXXNewExpr(const CXXNewExpr *E) {
                      nullCheckBB);
 
     resultPtr = PHI;
+  }
+
+  if (CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClTypePlusProfiling) {
+    auto *ClassTy = allocType->getAs<RecordType>();
+    if (ClassTy) {
+      const CXXRecordDecl *ClassDecl =
+        cast<CXXRecordDecl>(ClassTy->getDecl());
+      storeTypeRelationInfo(ClassDecl, ClassDecl);
+    }
   }
 
   return resultPtr;

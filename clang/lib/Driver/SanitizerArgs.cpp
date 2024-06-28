@@ -59,7 +59,7 @@ static const SanitizerMask Unrecoverable =
     SanitizerKind::Unreachable | SanitizerKind::Return;
 static const SanitizerMask AlwaysRecoverable =
     SanitizerKind::KernelAddress | SanitizerKind::KernelHWAddress;
-static const SanitizerMask NeedsLTO = SanitizerKind::CFI;
+static const SanitizerMask NeedsLTO = SanitizerKind::CFI | SanitizerKind::TypePlus;
 static const SanitizerMask TrappingSupported =
     (SanitizerKind::Undefined & ~SanitizerKind::Vptr) | SanitizerKind::Integer |
     SanitizerKind::Nullability | SanitizerKind::LocalBounds |

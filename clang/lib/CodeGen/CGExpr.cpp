@@ -40,6 +40,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Transforms/Utils/SanitizerStats.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 #include <string>
 
@@ -1116,14 +1117,54 @@ Address CodeGenFunction::EmitPointerWithAlignment(const Expr *E,
           }
         }
 
-        if (SanOpts.has(SanitizerKind::CFIUnrelatedCast) &&
-            CE->getCastKind() == CK_BitCast) {
+        if ((SanOpts.has(SanitizerKind::CFIUnrelatedCast)
+          || (SanOpts.has(SanitizerKind::TypePlus) && llvm::ClTypePlusCheckUnrelatedCasting))
+          && CE->getCastKind() == CK_BitCast) {
           if (auto PT = E->getType()->getAs<PointerType>())
             EmitVTablePtrCheckForCast(PT->getPointeeType(), Addr.getPointer(),
                                       /*MayBeNull=*/true,
                                       CodeGenFunction::CFITCK_UnrelatedCast,
                                       CE->getBeginLoc());
         }
+
+        // bitcast == reinterpret_cast
+        // update info for cast
+        if ((CE->getCastKind() == CK_BitCast) && SanOpts.has(SanitizerKind::TypePlus) && llvm::ClCreateUnrelatedCastTypeList) {
+          if(llvm::ClCastObjOpt) {
+            llvm::errs() << "The option \"cast-obj-opt\" and \"create-cast-..._list\" cannot but used at the same time.\n";
+            exit(1);
+          }
+          QualType SrcTy= CE->getSubExpr()->getType();
+          if(llvm::ClOldClassList) {
+            llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+            QualType DestTy = E->getType();
+            if(DestTy->getPointeeCXXRecordDecl()) {
+              if (const CXXRecordDecl *SourceClassDecl = SrcTy->getPointeeCXXRecordDecl()) {
+                if(!SourceClassDecl->isCLike()) {
+                  for (const auto &Base : SourceClassDecl->bases()) {
+                    QualType FieldType = getContext().getBaseElementType(Base.getType());
+                    if(!FieldType->getAsCXXRecordDecl()->isPolymorphic()) {
+                      HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(ConvertType(FieldType));
+                    }
+                  }
+                }
+              }
+
+              if (!SrcTy->isVoidPointerType() && SrcTy->isAnyPointerType() &&
+                   SrcTy->getPointeeType()->isStructureOrClassType() &&
+                   SrcTy->getPointeeType()->getAsCXXRecordDecl()->isCompleteDefinition() &&
+                   !SrcTy->getPointeeType()->getAsCXXRecordDecl()->isPolymorphic()) {
+                HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(ConvertType(SrcTy));
+                HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(ConvertType(DestTy));
+              }
+            }
+          } else {
+            CGM.getTypes().updateCastingRelatedTypeIntoFile1(SrcTy, false);
+            CGM.getTypes().updateCastingRelatedTypeIntoFile2(SrcTy, false);
+          }
+        }
+
+
         return CE->getCastKind() != CK_AddressSpaceConversion
                    ? Builder.CreateBitCast(Addr, ConvertType(E->getType()))
                    : Builder.CreateAddrSpaceCast(Addr,
@@ -3160,39 +3201,50 @@ static void emitCheckHandlerCall(CodeGenFunction &CGF,
     // Ensure that the call has at least an artificial debug location.
     DL.emplace(CGF, SourceLocation());
   }
-  bool NeedsAbortSuffix =
-      IsFatal && RecoverKind != CheckRecoverableKind::Unrecoverable;
-  bool MinimalRuntime = CGF.CGM.getCodeGenOpts().SanitizeMinimalRuntime;
-  const SanitizerHandlerInfo &CheckInfo = SanitizerHandlers[CheckHandler];
-  const StringRef CheckName = CheckInfo.Name;
-  std::string FnName = "__ubsan_handle_" + CheckName.str();
-  if (CheckInfo.Version && !MinimalRuntime)
-    FnName += "_v" + llvm::utostr(CheckInfo.Version);
-  if (MinimalRuntime)
-    FnName += "_minimal";
-  if (NeedsAbortSuffix)
-    FnName += "_abort";
-  bool MayReturn =
-      !IsFatal || RecoverKind == CheckRecoverableKind::AlwaysRecoverable;
 
-  llvm::AttrBuilder B;
-  if (!MayReturn) {
-    B.addAttribute(llvm::Attribute::NoReturn)
-        .addAttribute(llvm::Attribute::NoUnwind);
-  }
-  B.addAttribute(llvm::Attribute::UWTable);
-
-  llvm::FunctionCallee Fn = CGF.CGM.CreateRuntimeFunction(
-      FnType, FnName,
-      llvm::AttributeList::get(CGF.getLLVMContext(),
-                               llvm::AttributeList::FunctionIndex, B),
-      /*Local=*/true);
-  llvm::CallInst *HandlerCall = CGF.EmitNounwindRuntimeCall(Fn, FnArgs);
-  if (!MayReturn) {
-    HandlerCall->setDoesNotReturn();
-    CGF.Builder.CreateUnreachable();
+  if ((CGF.CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && (llvm::ClTypePlusCheckUnrelatedCasting || llvm::ClTypePlusCheckDerivedCasting)) || 
+      ((CGF.CGM.getLangOpts().Sanitize.has(SanitizerKind::CFIDerivedCast) || 
+      CGF.CGM.getLangOpts().Sanitize.has(SanitizerKind::CFIUnrelatedCast)) && llvm::ClTypePlusProfiling)) {
+    // insert call to Typeplus.cpp check
+    llvm::FunctionCallee ObjUpdateFunction =
+      CGF.CGM.getModule().getOrInsertFunction("__report_type_confusion",
+                                              llvm::FunctionType::get(CGF.VoidTy, {CGF.Int8PtrTy, CGF.IntPtrTy, CGF.IntPtrTy}, false));
+    CGF.Builder.CreateCall(ObjUpdateFunction, {CGF.Builder.CreateBitCast(FnArgs[0], CGF.Int8PtrTy), CGF.Builder.CreateBitCast(FnArgs[1], CGF.IntPtrTy), CGF.Builder.CreateBitCast(FnArgs[2], CGF.IntPtrTy)});
   } else {
-    CGF.Builder.CreateBr(ContBB);
+    bool NeedsAbortSuffix =
+      IsFatal && RecoverKind != CheckRecoverableKind::Unrecoverable;
+    bool MinimalRuntime = CGF.CGM.getCodeGenOpts().SanitizeMinimalRuntime;
+    const SanitizerHandlerInfo &CheckInfo = SanitizerHandlers[CheckHandler];
+    const StringRef CheckName = CheckInfo.Name;
+    std::string FnName = "__ubsan_handle_" + CheckName.str();
+    if (CheckInfo.Version && !MinimalRuntime)
+      FnName += "_v" + llvm::utostr(CheckInfo.Version);
+    if (MinimalRuntime)
+      FnName += "_minimal";
+    if (NeedsAbortSuffix)
+      FnName += "_abort";
+    bool MayReturn =
+        !IsFatal || RecoverKind == CheckRecoverableKind::AlwaysRecoverable;
+
+    llvm::AttrBuilder B;
+    if (!MayReturn) {
+      B.addAttribute(llvm::Attribute::NoReturn)
+          .addAttribute(llvm::Attribute::NoUnwind);
+    }
+    B.addAttribute(llvm::Attribute::UWTable);
+
+    llvm::FunctionCallee Fn = CGF.CGM.CreateRuntimeFunction(
+        FnType, FnName,
+        llvm::AttributeList::get(CGF.getLLVMContext(),
+                                 llvm::AttributeList::FunctionIndex, B),
+        /*Local=*/true);
+    llvm::CallInst *HandlerCall = CGF.EmitNounwindRuntimeCall(Fn, FnArgs);
+    if (!MayReturn) {
+      HandlerCall->setDoesNotReturn();
+      CGF.Builder.CreateUnreachable();
+    } else {
+      CGF.Builder.CreateBr(ContBB);
+    }
   }
 }
 
@@ -3234,7 +3286,9 @@ void CodeGenFunction::EmitCheck(
   assert(JointCond);
 
   CheckRecoverableKind RecoverKind = getRecoverableKind(Checked[0].second);
-  assert(SanOpts.has(Checked[0].second));
+  //TODO(jeon): check this option again
+  if (!SanOpts.has(SanitizerKind::TypePlus))
+    assert(SanOpts.has(Checked[0].second));
 #ifndef NDEBUG
   for (int i = 1, n = Checked.size(); i < n; ++i) {
     assert(RecoverKind == getRecoverableKind(Checked[i].second) &&
@@ -4727,10 +4781,32 @@ LValue CodeGenFunction::EmitCastLValue(const CastExpr *E) {
       EmitTypeCheck(TCK_DowncastReference, E->getExprLoc(),
                     Derived.getPointer(), E->getType());
 
-    if (SanOpts.has(SanitizerKind::CFIDerivedCast))
+    if (SanOpts.has(SanitizerKind::CFIDerivedCast) || (SanOpts.has(SanitizerKind::TypePlus) && llvm::ClTypePlusCheckDerivedCasting)) {
       EmitVTablePtrCheckForCast(E->getType(), Derived.getPointer(),
                                 /*MayBeNull=*/false, CFITCK_DerivedCast,
                                 E->getBeginLoc());
+    }
+
+    // keep track of cast
+    if (SanOpts.has(SanitizerKind::TypePlus) && llvm::ClCreateDerivedCastTypeList) {
+      if(llvm::ClCastObjOpt) {
+        llvm::errs() << "The option \"cast-obj-opt\" and \"create-cast-..._list\" cannot but used at the same time.\n";
+        exit(1);
+      }
+      QualType SrcTy = E->getType();
+      if(llvm::ClOldClassList) {
+        if (!SrcTy->isVoidPointerType() && SrcTy->isAnyPointerType() &&
+             SrcTy->getPointeeType()->isStructureOrClassType() &&
+             SrcTy->getPointeeType()->getAsCXXRecordDecl()->isCompleteDefinition() &&
+             !SrcTy->getPointeeType()->getAsCXXRecordDecl()->isPolymorphic()) {
+          llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+          HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(ConvertType(SrcTy));
+        }
+      } else {
+        CGM.getTypes().updateCastingRelatedTypeIntoFile1(SrcTy, true);
+        CGM.getTypes().updateCastingRelatedTypeIntoFile2(SrcTy, true);
+      }
+    }
 
     return MakeAddrLValue(Derived, E->getType(), LV.getBaseInfo(),
                           CGM.getTBAAInfoForSubobject(LV, E->getType()));
@@ -4744,10 +4820,44 @@ LValue CodeGenFunction::EmitCastLValue(const CastExpr *E) {
     Address V = Builder.CreateBitCast(LV.getAddress(*this),
                                       ConvertType(CE->getTypeAsWritten()));
 
-    if (SanOpts.has(SanitizerKind::CFIUnrelatedCast))
+
+    QualType SrcTy = E->getType();
+    bool isDerivedCast = (SrcTy->isAnyPointerType() && SrcTy->getPointeeType()->isStructureOrClassType()) || SrcTy->isStructureOrClassType();
+    // keep track of cast
+    if (SanOpts.has(SanitizerKind::TypePlus) && (llvm::ClCreateUnrelatedCastTypeList || llvm::ClCreateDerivedCastTypeList)) {
+      if(llvm::ClCastObjOpt) {
+        llvm::errs() << "The option \"cast-obj-opt\" and \"create-cast-..._list\" cannot but used at the same time.\n";
+        exit(1);
+      }
+      if(llvm::ClOldClassList) {
+        llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+        if (const CXXRecordDecl *SourceClassDecl = SrcTy->getPointeeCXXRecordDecl()) {
+          for (const auto &Base : SourceClassDecl->bases()) {
+            QualType FieldType = getContext().getBaseElementType(Base.getType());
+            if(!FieldType->getAsCXXRecordDecl()->isPolymorphic()) {
+              HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(ConvertType(FieldType));
+            }
+          }
+        }
+        // TODO: NICOLAS CHECK IF this should not be in the if
+        if (!SrcTy->isVoidPointerType() && SrcTy->isAnyPointerType() &&
+             SrcTy->getPointeeType()->isStructureOrClassType() &&
+             SrcTy->getPointeeType()->getAsCXXRecordDecl()->isCompleteDefinition() &&
+             !SrcTy->getPointeeType()->getAsCXXRecordDecl()->isPolymorphic()) {
+          HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(
+                ConvertType(SrcTy));
+        }
+      } else {
+        CGM.getTypes().updateCastingRelatedTypeIntoFile1(SrcTy, isDerivedCast);
+        CGM.getTypes().updateCastingRelatedTypeIntoFile2(SrcTy, isDerivedCast);
+      }
+    }
+
+    if (SanOpts.has(SanitizerKind::CFIUnrelatedCast) && (SanOpts.has(SanitizerKind::TypePlus) && llvm::ClTypePlusCheckUnrelatedCasting)) {
       EmitVTablePtrCheckForCast(E->getType(), V.getPointer(),
-                                /*MayBeNull=*/false, CFITCK_UnrelatedCast,
+                                /*MayBeNull=*/false, isDerivedCast ? CFITCK_DerivedCast : CFITCK_UnrelatedCast,
                                 E->getBeginLoc());
+    }
 
     return MakeAddrLValue(V, E->getType(), LV.getBaseInfo(),
                           CGM.getTBAAInfoForSubobject(LV, E->getType()));
@@ -4979,6 +5089,84 @@ LValue CodeGenFunction::EmitBinaryOperatorLValue(const BinaryOperator *E) {
     case Qualifiers::OCL_ExplicitNone:
     case Qualifiers::OCL_Weak:
       break;
+    }
+
+    Expr *Base = E->getLHS();
+
+    if (CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) &&  llvm::ClVtableStandard && E->isAssignmentOp()) {
+
+      int isConstructorCallNeeded = 0;
+      RecordDecl *TargetInitDecl;
+      RecordDecl *UnionDecl;
+
+  		MemberExpr* oldME; 
+      while (MemberExpr *ME = dyn_cast<MemberExpr>(Base)) {
+        FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl());
+        if (!FD)
+          break;
+        if (RecordDecl* TargetDecl = FD->getParent()) {
+          if (TargetDecl->isUnion() && isConstructorCallNeeded == 1) {
+            UnionDecl = TargetDecl;
+            isConstructorCallNeeded = 2;
+          } else if(TargetDecl->isUnion()) {
+          //  llvm::errs() << "Union but no above class\n";
+          }
+
+
+          if (TargetDecl->isStruct()) {
+            isConstructorCallNeeded = 1;
+            TargetInitDecl = TargetDecl;
+          }
+
+          if (TargetDecl->isClass()) {
+            isConstructorCallNeeded = 1;
+            TargetInitDecl = TargetDecl;
+          }
+        }
+        oldME = ME;
+        Base = ME->getBase()->IgnoreParenCasts();
+      }
+
+
+      if (isConstructorCallNeeded == 2) { // Union on LHS
+        if (const CXXRecordDecl *DerivedClassDecl = dyn_cast<CXXRecordDecl>(TargetInitDecl)) {
+          // VTable: Just return when target object type is not appropriate
+          if (DerivedClassDecl->hasDefinition() && ((DerivedClassDecl->isClass() || DerivedClassDecl->isStruct())) && DerivedClassDecl->isForcePoly()) {
+            // VTable: Try to find constructor calls
+            for (CXXMethodDecl *MD : llvm::make_range(DerivedClassDecl->method_begin(), DerivedClassDecl->method_end()))
+              if (CXXConstructorDecl *target = dyn_cast<CXXConstructorDecl>(MD)) {
+                if (target->isDefaultConstructor()) {
+                  LValue lv = EmitMemberExpr(oldME);
+                  //llvm::Value* result = lv.getBitFieldPointer();
+                  
+
+                      std::vector<Expr*> argsVec(0);
+                      for(uint i = 0; i < target->getNumParams(); i++) {
+                        argsVec.emplace_back(target->getParamDecl(i)->getDefaultArg());
+                      }
+                      ArrayRef<Expr *> Args = llvm::makeArrayRef(argsVec);
+
+                  //GlobalDecl GD(target, Ctor_Base);
+                  //llvm::FunctionCallee initFunction = CGM.getAddrAndTypeOfCXXStructor(GD);
+                      CXXConstructExpr *cee = CXXConstructExpr::Create(getContext(), DerivedClassDecl->getTypeForDecl()->getCanonicalTypeInternal(), E->getExprLoc(),
+                        target, false, Args,
+                        false, false, false, false,
+                        CXXConstructExpr::ConstructionKind::CK_Complete, E->getSourceRange());
+
+                    Address addr = lv.getAddress(*this);
+
+                    AggValueSlot avs = AggValueSlot::forAddr(addr, Qualifiers(), AggValueSlot::IsDestructed, AggValueSlot::DoesNotNeedGCBarriers, AggValueSlot::IsAliased, AggValueSlot::DoesNotOverlap);
+                  EmitCXXConstructorCall(target, Ctor_Base, false, false, avs, cee);
+                  bool debug = false; // SrcR->getType() == Builder.getInt1Ty();;
+                  if(debug){
+                    llvm::errs() << "Found real union constructor " << target->getNameAsString() << "\n";
+                    E->dumpColor();
+                  }
+                }
+              }
+          }
+        }
+      }
     }
 
     RValue RV = EmitAnyExpr(E->getRHS());

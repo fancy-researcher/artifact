@@ -14,6 +14,9 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/ASTMutationListener.h"
+#include "clang/AST/Attrs.inc"
+#include "clang/AST/Decl.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/PrettyDeclStackTrace.h"
@@ -30,6 +33,8 @@
 #include "clang/Sema/TemplateDeduction.h"
 #include "clang/Sema/TemplateInstCallback.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 using namespace clang;
 using namespace sema;
@@ -2859,6 +2864,58 @@ Sema::InstantiateClass(SourceLocation PointOfInstantiation,
     else if (MightHaveConstexprVirtualFunctions)
       MarkVirtualMembersReferenced(PointOfInstantiation, Instantiation,
                                    /*ConstexprOnly*/ true);
+  }
+
+  bool debug = false;
+
+  if (Instantiation->isForcePoly() && getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClVtableStandard) {
+    if (Instantiation && (Instantiation->isStruct() || Instantiation->isClass()) && !Instantiation->isBeingDefined()) {
+      // Looping through constructor to find a possible default one.
+      std::list<CXXConstructorDecl*> defaultConst = {};
+      std::list<CXXConstructorDecl*> defaultedConst = {};
+      for (NamedDecl *ND : LookupConstructors(Instantiation)) {
+        if(CXXConstructorDecl* target = dyn_cast<CXXConstructorDecl>(ND->getUnderlyingDecl())) {
+          if (target->isDefaultConstructor()) {
+            defaultConst.push_back(target);
+          }
+          if (target->isDefaulted()) {
+            defaultedConst.push_back(target);
+          }
+        }
+      }
+      if (debug) {
+        llvm::errs() << "# default Const: " << defaultConst.size() << "\n"; 
+        llvm::errs() << "# defaulted Const: " << defaultedConst.size() << "\n";
+        PointOfInstantiation.dump(getSourceManager());
+        llvm::errs() << "---\n";
+      }
+      
+      if(!Instantiation->isDependentType()) {
+        printCtor("Entry Template constructor instantiation: ", Instantiation, debug, true);
+        if(defaultConst.empty()) { // no default const
+          CXXConstructorDecl* target = DeclareImplicitDefaultConstructor(Instantiation);
+          defaultConst.push_back(target);
+          printCtor("Template: declared", Instantiation, debug, true, target);
+        } 
+        if(defaultConst.size() == 1) {
+          CXXConstructorDecl* target = defaultConst.front();
+          printCtor("Found 1 def cons. ", Instantiation, debug, true, target);
+          target->dropAttr<ExcludeFromExplicitInstantiationAttr>();
+          if (target->isDeleted() || (target->isImplicit() && !target->willHaveBody() && !target->hasBody())) {
+            printCtor("Defined temp 1: ", Instantiation, debug, true, target);
+            target->setDeletedAsWritten(false);
+            TypePPDefineImplicitDefaultConstructor(Instantiation->getLocation(), target);
+          }
+          MarkFunctionReferenced(Instantiation->getLocation(), target);
+          printCtor("Should be good: ", Instantiation, debug, true, target);
+        } else {
+          llvm::errs() << "UNEXPECTED Multiple default const\n";
+        }
+      } else {
+        printCtor("Template dependant type: ", Instantiation, debug, true);
+      }
+    }
+    MarkVTableUsed(Instantiation->getLocation(),  Instantiation, true);
   }
 
   Consumer.HandleTagDeclDefinition(Instantiation);

@@ -27,7 +27,7 @@
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace clang;
 
@@ -4185,8 +4185,10 @@ static void TryConstructorInitialization(Sema &S,
         Entity.getType().isConstQualified()) {
       if (!CtorDecl->getParent()->allowConstDefaultInit()) {
         if (!maybeRecoverWithZeroInitialization(S, Sequence, Entity))
-          Sequence.SetFailed(InitializationSequence::FK_DefaultInitOfConst);
-        return;
+          if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+            Sequence.SetFailed(InitializationSequence::FK_DefaultInitOfConst);
+            return;
+          }
       }
     }
 
@@ -6507,10 +6509,9 @@ PerformConstructorInitialization(Sema &S,
     // the definition for completely trivial constructors.
     assert(Constructor->getParent() && "No parent class for constructor.");
     if (Constructor->isDefaulted() && Constructor->isDefaultConstructor() &&
-        Constructor->isTrivial() && !Constructor->isUsed(false)) {
+         Constructor->isTrivial() && !Constructor->isUsed(false)) {
       S.runWithSufficientStackSpace(Loc, [&] {
-        S.DefineImplicitDefaultConstructor(Loc, Constructor);
-      });
+        S.DefineImplicitDefaultConstructor(Loc, Constructor); });
     }
   }
 
@@ -6613,7 +6614,9 @@ PerformConstructorInitialization(Sema &S,
     return ExprError();
 
   // Only check access if all of that succeeded.
-  S.CheckConstructorAccess(Loc, Constructor, Step.Function.FoundDecl, Entity);
+  if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+    S.CheckConstructorAccess(Loc, Constructor, Step.Function.FoundDecl, Entity);
+  }
   if (S.DiagnoseUseOfDecl(Step.Function.FoundDecl, Loc))
     return ExprError();
 
@@ -9305,12 +9308,15 @@ bool InitializationSequence::Diagnose(Sema &S,
           if (auto Inherited = Constructor->getInheritedConstructor())
             InheritedFrom = Inherited.getShadowDecl()->getNominatedBaseClass();
           if (Entity.getKind() == InitializedEntity::EK_Base) {
-            S.Diag(Kind.getLocation(), diag::err_missing_default_ctor)
-              << (InheritedFrom ? 2 : Constructor->isImplicit() ? 1 : 0)
-              << S.Context.getTypeDeclType(Constructor->getParent())
-              << /*base=*/0
-              << Entity.getType()
-              << InheritedFrom;
+            // Disabling error for non-initialized member (e.g., const issue)
+            if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+              S.Diag(Kind.getLocation(), diag::err_missing_default_ctor)
+                << (InheritedFrom ? 2 : Constructor->isImplicit() ? 1 : 0)
+                << S.Context.getTypeDeclType(Constructor->getParent())
+                << /*base=*/0
+                << Entity.getType()
+                << InheritedFrom;
+            }
 
             RecordDecl *BaseDecl
               = Entity.getBaseSpecifier()->getType()->castAs<RecordType>()
@@ -9318,14 +9324,16 @@ bool InitializationSequence::Diagnose(Sema &S,
             S.Diag(BaseDecl->getLocation(), diag::note_previous_decl)
               << S.Context.getTagDeclType(BaseDecl);
           } else {
-            S.Diag(Kind.getLocation(), diag::err_missing_default_ctor)
-              << (InheritedFrom ? 2 : Constructor->isImplicit() ? 1 : 0)
-              << S.Context.getTypeDeclType(Constructor->getParent())
-              << /*member=*/1
-              << Entity.getName()
-              << InheritedFrom;
-            S.Diag(Entity.getDecl()->getLocation(),
-                   diag::note_member_declared_at);
+            if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+              S.Diag(Kind.getLocation(), diag::err_missing_default_ctor)
+                << (InheritedFrom ? 2 : Constructor->isImplicit() ? 1 : 0)
+                << S.Context.getTypeDeclType(Constructor->getParent())
+                << /*member=*/1
+                << Entity.getName()
+                << InheritedFrom;
+              S.Diag(Entity.getDecl()->getLocation(),
+                     diag::note_member_declared_at);
+            }
 
             if (const RecordType *Record
                                  = Entity.getType()->getAs<RecordType>())
@@ -9349,10 +9357,12 @@ bool InitializationSequence::Diagnose(Sema &S,
         OverloadingResult Ovl
           = FailedCandidateSet.BestViableFunction(S, Kind.getLocation(), Best);
         if (Ovl != OR_Deleted) {
-          S.Diag(Kind.getLocation(), diag::err_ovl_deleted_init)
+          if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+            S.Diag(Kind.getLocation(), diag::err_ovl_deleted_init)
               << DestType << ArgsRange;
-          llvm_unreachable("Inconsistent overload resolution?");
-          break;
+            llvm_unreachable("Inconsistent overload resolution?");
+            break;
+          }
         }
 
         // If this is a defaulted or implicitly-declared function, then
@@ -9363,9 +9373,10 @@ bool InitializationSequence::Diagnose(Sema &S,
             << S.getSpecialMember(cast<CXXMethodDecl>(Best->Function))
             << DestType << ArgsRange;
         else
-          S.Diag(Kind.getLocation(), diag::err_ovl_deleted_init)
+          if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+            S.Diag(Kind.getLocation(), diag::err_ovl_deleted_init)
               << DestType << ArgsRange;
-
+          }
         S.NoteDeletedFunction(Best->Function);
         break;
       }
@@ -9383,12 +9394,16 @@ bool InitializationSequence::Diagnose(Sema &S,
       // a constructor. Complain that it needs to be explicitly
       // initialized.
       CXXConstructorDecl *Constructor = cast<CXXConstructorDecl>(S.CurContext);
-      S.Diag(Kind.getLocation(), diag::err_uninitialized_member_in_ctor)
-        << (Constructor->getInheritedConstructor() ? 2 :
-            Constructor->isImplicit() ? 1 : 0)
-        << S.Context.getTypeDeclType(Constructor->getParent())
-        << /*const=*/1
-        << Entity.getName();
+      if (!S.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+        // Handling const issue where we can not initialize them. We do it later
+        // in a fake constructor
+        S.Diag(Kind.getLocation(), diag::err_uninitialized_member_in_ctor)
+          << (Constructor->getInheritedConstructor() ? 2 :
+              Constructor->isImplicit() ? 1 : 0)
+          << S.Context.getTypeDeclType(Constructor->getParent())
+          << /*const=*/1
+          << Entity.getName();
+      }
       S.Diag(Entity.getDecl()->getLocation(), diag::note_previous_decl)
         << Entity.getName();
     } else {

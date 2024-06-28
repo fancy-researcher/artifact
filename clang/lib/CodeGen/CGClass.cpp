@@ -23,11 +23,14 @@
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/StmtCXX.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
+#include "llvm-c/Types.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 #include "llvm/Transforms/Utils/SanitizerStats.h"
 
 using namespace clang;
@@ -1937,7 +1940,8 @@ void CodeGenFunction::EmitCXXAggrConstructorCall(const CXXConstructorDecl *ctor,
                                                  Address arrayBase,
                                                  const CXXConstructExpr *E,
                                                  bool NewPointerIsChecked,
-                                                 bool zeroInitialize) {
+                                                 bool zeroInitialize,
+                                                 bool isTypePPRequired) {
   // It's legal for numElements to be zero.  This can happen both
   // dynamically, because x can be zero in 'new A[x]', and statically,
   // because of GCC extensions that permit zero-length arrays.  There
@@ -2005,7 +2009,7 @@ void CodeGenFunction::EmitCXXAggrConstructorCall(const CXXConstructorDecl *ctor,
 
     // Evaluate the constructor and its arguments in a regular
     // partial-destroy cleanup.
-    if (getLangOpts().Exceptions &&
+    if (getLangOpts().Exceptions && !isTypePPRequired &&
         !ctor->getParent()->hasTrivialDestructor()) {
       Destroyer *destroyer = destroyCXXObject;
       pushRegularPartialArrayCleanup(arrayBegin, cur, type, eltAlignment,
@@ -2133,7 +2137,9 @@ void CodeGenFunction::EmitCXXConstructorCall(const CXXConstructorDecl *D,
                                              SourceLocation Loc,
                                              bool NewPointerIsChecked) {
   const CXXRecordDecl *ClassDecl = D->getParent();
-
+  if (CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClTypePlusProfiling) {
+    storeTypeRelationInfo(ClassDecl, ClassDecl);
+  }
   if (!NewPointerIsChecked)
     EmitTypeCheck(CodeGenFunction::TCK_ConstructorCall, Loc, This.getPointer(),
                   getContext().getRecordType(ClassDecl), CharUnits::Zero());
@@ -2709,9 +2715,71 @@ void CodeGenFunction::EmitVTablePtrCheckForCast(QualType T,
     return;
 
   const CXXRecordDecl *ClassDecl = cast<CXXRecordDecl>(ClassTy->getDecl());
+  // Enabling logging for missed cast in LLVM CFI
+  if (!ClassDecl->isCompleteDefinition()) {
+    if (!llvm::ClTypePlusProfiling || !ClassDecl->isCompleteDefinition() || !ClassDecl->isClass()) {
+      return;
+    }
 
-  if (!ClassDecl->isCompleteDefinition() || !ClassDecl->isDynamicClass())
+    SanitizerMask M;
+    switch (TCK) {
+    case CFITCK_VCall:
+      M = SanitizerKind::CFIVCall;
+      break;
+    case CFITCK_NVCall:
+      M = SanitizerKind::CFINVCall;
+      break;
+    case CFITCK_DerivedCast:
+      M = SanitizerKind::CFIDerivedCast;
+      break;
+    case CFITCK_UnrelatedCast:
+      M = SanitizerKind::CFIUnrelatedCast;
+      break;
+    case CFITCK_ICall:
+    case CFITCK_NVMFCall:
+    case CFITCK_VMFCall:
+      llvm_unreachable("unexpected sanitizer kind");
+    }
+    std::string TypeName = ClassDecl->getQualifiedNameAsString();
+    if (getContext().getNoSanitizeList().containsType(M, TypeName)) {
+      return;
+    }
+
+    llvm::Value *VTable;
+    std::tie(VTable, ClassDecl) = CGM.getCXXABI().LoadVTablePtr(*this, Address(Derived, getPointerAlign()), ClassDecl);
+    SmallVector<llvm::Value *, 4> Args;
+    if (!CGM.getCodeGenOpts().SanitizeMinimalRuntime) {
+      llvm::Constant *StaticData[] = {
+          llvm::ConstantInt::get(Int8Ty, TCK),
+          EmitCheckSourceLocation(Loc),
+          EmitCheckTypeDescriptor(QualType(ClassDecl->getTypeForDecl(), 0)),
+      };
+      llvm::Value *CastedVTable = Builder.CreateBitCast(VTable, Int8PtrTy);
+      ArrayRef<llvm::Value *> DynamicArgs = {CastedVTable, Builder.getFalse()};
+      Args.reserve(DynamicArgs.size() + 1);
+
+      // Emit handler arguments and create handler function type.
+      llvm::Constant *Info = llvm::ConstantStruct::getAnon(StaticData);
+      auto *InfoPtr = new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false, llvm::GlobalVariable::PrivateLinkage, Info);
+      InfoPtr->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      CGM.getSanitizerMetadata()->disableSanitizerForGlobal(InfoPtr);
+      Args.push_back(Builder.CreateBitCast(InfoPtr, Int8PtrTy));
+
+      for (size_t i = 0, n = DynamicArgs.size(); i != n; ++i) {
+          Args.push_back(EmitCheckValue(DynamicArgs[i]));
+      }
+      llvm::FunctionCallee ObjUpdateFunction = CGM.getModule().getOrInsertFunction("__profiling_typecheck", llvm::FunctionType::get(VoidTy, {(Int8PtrTy)}, false));
+
+      Builder.CreateCall(ObjUpdateFunction, {Builder.CreateBitCast(InfoPtr, Int8PtrTy)});
+      ObjUpdateFunction = CGM.getModule().getOrInsertFunction("__report_type_confusion2", llvm::FunctionType::get(VoidTy, {Int8PtrTy, IntPtrTy}, false));
+      Builder.CreateCall(ObjUpdateFunction, {Builder.CreateBitCast(Args[0], Int8PtrTy), Builder.CreateBitCast(Args[2], IntPtrTy)});
+    }
+    
     return;
+  }
+  if(!ClassDecl->isDynamicClass() && (!CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) || llvm::ClMissingChecks)) {
+    return;
+  } 
 
   if (!SanOpts.has(SanitizerKind::CFICastStrict))
     ClassDecl = LeastDerivedClassWithSameLayout(ClassDecl);
@@ -2786,6 +2854,7 @@ void CodeGenFunction::EmitVTablePtrCheck(const CXXRecordDecl *RD,
       CGM.CreateMetadataIdentifierForType(QualType(RD->getTypeForDecl(), 0));
   llvm::Value *TypeId = llvm::MetadataAsValue::get(getLLVMContext(), MD);
 
+  // The llvm.type.test intrinsic tests whether the given pointer is associated with the given type identifier.
   llvm::Value *CastedVTable = Builder.CreateBitCast(VTable, Int8PtrTy);
   llvm::Value *TypeTest = Builder.CreateCall(
       CGM.getIntrinsic(llvm::Intrinsic::type_test), {CastedVTable, TypeId});
@@ -2795,6 +2864,26 @@ void CodeGenFunction::EmitVTablePtrCheck(const CXXRecordDecl *RD,
       EmitCheckSourceLocation(Loc),
       EmitCheckTypeDescriptor(QualType(RD->getTypeForDecl(), 0)),
   };
+  // add call to profiling -- type++
+  if ((CGM.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) || 
+       CGM.getLangOpts().Sanitize.has(SanitizerKind::CFIDerivedCast) ||
+       CGM.getLangOpts().Sanitize.has(SanitizerKind::CFIUnrelatedCast)) &&
+      (TCK == CFITCK_DerivedCast || TCK == CFITCK_UnrelatedCast) && llvm::ClTypePlusProfiling) {
+
+    ArrayRef<llvm::Constant *> StaticArgs = StaticData;
+    llvm::Constant *Info = llvm::ConstantStruct::getAnon(StaticArgs);
+    auto *InfoPtr =
+      new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false,
+                               llvm::GlobalVariable::PrivateLinkage, Info);
+    InfoPtr->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    CGM.getSanitizerMetadata()->disableSanitizerForGlobal(InfoPtr);
+    
+    llvm::FunctionCallee ObjUpdateFunction =
+      CGM.getModule().getOrInsertFunction("__profiling_typecheck",
+                                          llvm::FunctionType::get(VoidTy, {(Int8PtrTy)}, false));
+
+    Builder.CreateCall(ObjUpdateFunction, {Builder.CreateBitCast(InfoPtr, Int8PtrTy)});
+  }
 
   auto CrossDsoTypeId = CGM.CreateCrossDsoCfiTypeId(MD);
   if (CGM.getCodeGenOpts().SanitizeCfiCrossDso && CrossDsoTypeId) {
@@ -2812,8 +2901,10 @@ void CodeGenFunction::EmitVTablePtrCheck(const CXXRecordDecl *RD,
       llvm::MDString::get(CGM.getLLVMContext(), "all-vtables"));
   llvm::Value *ValidVtable = Builder.CreateCall(
       CGM.getIntrinsic(llvm::Intrinsic::type_test), {CastedVTable, AllVtables});
-  EmitCheck(std::make_pair(TypeTest, M), SanitizerHandler::CFICheckFail,
-            StaticData, {CastedVTable, ValidVtable});
+  if(!llvm::ClNoCheckUnsuppClass || RD->isForcePoly() || RD->isPolymorphic()) {
+    EmitCheck(std::make_pair(TypeTest, M), SanitizerHandler::CFICheckFail,
+              StaticData, {CastedVTable, ValidVtable});
+  }
 }
 
 bool CodeGenFunction::ShouldEmitVTableTypeCheckedLoad(const CXXRecordDecl *RD) {

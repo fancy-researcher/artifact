@@ -47,6 +47,8 @@
 #include <algorithm>
 #include <deque>
 #include <iterator>
+#include <fstream>
+#include <string.h>
 
 using namespace clang;
 
@@ -807,11 +809,114 @@ static void CreateIfFixit(Sema &S, const Stmt *If, const Stmt *Then,
   }
 }
 
+static bool classesLoaded = false;
+static std::set<std::string> classesToCheck;
+static bool considerAllClasses = false;
+
+static void loadClassesToCheck() {
+
+    //llvm::errs() << "loadClassesToCheck\n";
+
+    if (classesLoaded)
+        return;
+
+    //llvm::errs() << "loadClassesToCheck after return\n";
+
+    char path[1000] = {0};
+
+    considerAllClasses = true;
+    if (getenv("TARGET_TYPE_LIST_PATH")) {
+        strcpy(path, getenv("TARGET_TYPE_LIST_PATH"));
+
+	std::fstream newfile;
+
+	newfile.open(path,std::ios::in);
+
+	if (newfile.is_open()){
+	    std::string tp;
+            while(getline(newfile, tp)) 
+               classesToCheck.insert(tp);
+            newfile.close(); 
+            considerAllClasses = false;
+        } else {
+            llvm::errs() << "TARGET_TYPE_LIST_PATH is not pointing to a correct file, considering all classes.\n";
+        }
+    } else {
+        llvm::errs() << "TARGET_TYPE_LIST_PATH not defined, considering all classes.\n";
+    }
+
+    classesLoaded = true;
+}
+
+static void handleTpyeCXXLogs(QualType QT, Sema &S) {
+
+  //llvm::errs() << "handleTpyeCXXLogs\n";
+
+  // if I don't indicate the log file -> I ignore the check at once!
+  if (getenv("WARNING_LOG_PATH") == nullptr)
+    return;
+
+  //llvm::errs() << "handleTpyeCXXLogs - after warning log path\n";
+  
+  loadClassesToCheck();
+
+  const Type* tt = QT.getTypePtr();
+
+  while (const PointerType* pt = dyn_cast<PointerType>(tt)) {
+      QualType ste = pt->getPointeeType();
+      tt = ste.getTypePtr();
+    }
+
+  if (isa<BuiltinType>(tt))
+    return;
+
+  RecordDecl *RD = tt->getAsRecordDecl();
+  if (!RD)
+      return;
+
+  bool hasAProblem = false;
+  if (RD->isStruct() || RD->isClass() || RD->isInterface() ) {
+    if (considerAllClasses) {
+      hasAProblem = true;
+    } else {
+       StringRef nameStruct = RD->getName();
+       if (std::find(classesToCheck.begin(), classesToCheck.end(), nameStruct.str()) != classesToCheck.end())
+         hasAProblem = true;
+    }
+  }
+
+  if (hasAProblem) {
+    SourceManager &SM = S.getSourceManager();
+
+    // if (!SM)
+    //  return;
+
+    // file name
+    SourceLocation Loc = RD->getSourceRange().getBegin();
+    StringRef FileName = SM.getFilename(Loc);
+    // file offset
+    unsigned int Offset = SM.getFileOffset(Loc);
+
+    const char *type = "uninitobj";
+    const char *severity = "warning";
+    char logFilePath[1000] = {0};
+    strcpy(logFilePath, getenv("WARNING_LOG_PATH"));
+    
+    std::ofstream log(logFilePath, std::ios_base::app | std::ios_base::out);
+    log << severity << "|" << type << "|" << FileName.str() <<  "|" << Offset << "\n";
+    log.close();
+  }
+
+}
+
 /// DiagUninitUse -- Helper function to produce a diagnostic for an
 /// uninitialized use of a variable.
 static void DiagUninitUse(Sema &S, const VarDecl *VD, const UninitUse &Use,
                           bool IsCapturedByBlock) {
   bool Diagnosed = false;
+
+  if (VD)
+    handleTpyeCXXLogs(VD->getType(), S);
 
   switch (Use.getKind()) {
   case UninitUse::Always:

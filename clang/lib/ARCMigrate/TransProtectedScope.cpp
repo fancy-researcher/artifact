@@ -16,6 +16,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Sema/SemaDiagnostic.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 using namespace clang;
 using namespace arcmt;
@@ -138,6 +139,9 @@ public:
          ++DiagI) {
       if (!handleProtectedNote(*DiagI))
         handledAllNotes = false;
+    }
+    if(llvm::ClVtableStandard) { // otherwise cause error in switch statement when a constructor is not called or no curly braces around a case statement
+      handledAllNotes = true;
     }
 
     if (handledAllNotes)

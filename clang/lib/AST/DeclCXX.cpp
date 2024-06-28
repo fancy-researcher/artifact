@@ -43,14 +43,20 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 using namespace clang;
+using namespace std;
 
+
+SanitizerSet SanOptsClang = SanitizerSet();
 //===----------------------------------------------------------------------===//
 // Decl Allocation/Deallocation Method Implementations
 //===----------------------------------------------------------------------===//
@@ -74,7 +80,7 @@ void LazyASTUnresolvedSet::getFromExternalSource(ASTContext &C) const {
 
 CXXRecordDecl::DefinitionData::DefinitionData(CXXRecordDecl *D)
     : UserDeclaredConstructor(false), UserDeclaredSpecialMembers(0),
-      Aggregate(true), PlainOldData(true), Empty(true), Polymorphic(false),
+      Aggregate(true), PlainOldData(true), Empty(true), Polymorphic(false), ForcePolymorphic(false),
       Abstract(false), IsStandardLayout(true), IsCXX11StandardLayout(true),
       HasBasesWithFields(false), HasBasesWithNonStaticDataMembers(false),
       HasPrivateFields(false), HasProtectedFields(false),
@@ -269,11 +275,31 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
       //   classes [...] public
       data().StructuralIfLiteral = false;
     }
+    // For each base class
+    if(C.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClTypePlusProfilingAllClasses) {
+      if(BaseClassDecl->isPolymorphic()) {
+        char fileName[1000];
+        char tmp[1000];
+        strcpy(fileName, "/poly_classes.txt");
+        sprintf(tmp, "%s", BaseClassDecl->getName().str().c_str());
+        llvm::HexTypeCommonUtil::writeInfoToFile(tmp, fileName);
+      }
+    }
+    if (C.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClPolyClasses && BaseClassDecl->data().Polymorphic) {
+      // We should not check for the optimization here as we need to make sure
+      // that parent classes of force-polymorphic object are also force-polymorphic.
+      if (!data().Polymorphic && BaseClassDecl->data().ForcePolymorphic) {
+        data().ForcePolymorphic = true;
+      }
 
-    // C++ [class.virtual]p1:
-    //   A class that declares or inherits a virtual function is called a
-    //   polymorphic class.
-    if (BaseClassDecl->isPolymorphic()) {
+      if (!BaseClassDecl->data().ForcePolymorphic) {
+        data().ForcePolymorphic = false;
+      }
+      if(data().ForcePolymorphic) {
+        data().Polymorphic = true;
+      }
+    }
+    if (BaseClassDecl->data().Polymorphic) {
       data().Polymorphic = true;
 
       //   An aggregate is a class with [...] no virtual functions.
@@ -470,6 +496,47 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
   // we know there are no repeated base classes.
   if (data().IsStandardLayout && NumBases > 1 && hasRepeatedBaseClass(this))
     data().IsStandardLayout = false;
+  if(C.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClTypePlusProfilingAllClasses) {
+    if(this->isPolymorphic()) {
+      char fileName[1000];
+      char tmp[1000];
+      strcpy(fileName, "/poly_classes.txt");
+      sprintf(tmp, "%s", this->getName().str().c_str());
+      llvm::HexTypeCommonUtil::writeInfoToFile(tmp, fileName);
+    }
+  }
+
+  // CXXRecordDecl::setBase
+  // Forcibly change non-poly to poly class if target class still remaining as non-poly class
+  if ((this->isClass() || this->isStruct()) && !data().Polymorphic &&
+      C.getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClPolyClasses) {
+  
+  
+    if (isOpt() || !llvm::ClCastObjOpt) {
+      data().ForcePolymorphic = true;
+  
+      data().Polymorphic = true;
+  
+      //   An aggregate is a class with [...] no virtual functions.
+      data().Aggregate = false;
+  
+      //   A POD-struct is an aggregate class...
+      data().PlainOldData = false;
+  
+      // C++14 [meta.unary.prop]p4:
+      //   T is a class type [...] with [...] no virtual member functions...
+      data().Empty = false;
+  
+      data().HasTrivialSpecialMembers &= SMF_Destructor;
+      data().HasTrivialSpecialMembersForCall &= SMF_Destructor;
+  
+      // C++0x [class]p7:
+      //   A standard-layout class is a class that: [...]
+      //    -- has no virtual functions
+      data().IsStandardLayout = false;
+      data().IsCXX11StandardLayout = false;
+    }
+  }
 
   if (VBases.empty()) {
     data().IsParsingBaseSpecifiers = false;
@@ -690,6 +757,30 @@ bool CXXRecordDecl::lambdaIsDefaultConstructibleAndAssignable() const {
   return getASTContext().getLangOpts().CPlusPlus20;
 }
 
+bool CXXRecordDecl::isOpt() {
+  if(!getASTContext().ReadClasses) {
+  FILE *op;
+  char path[10000];
+  if(getenv("TARGET_TYPE_LIST_PATH")) {
+    strcpy(path, getenv("TARGET_TYPE_LIST_PATH"));
+  }
+  op = fopen(path, "r");
+  if(op != nullptr) {
+    char tmp[10000];
+    while(fscanf(op, "%s", tmp) != EOF) {
+      std::string targetClass(tmp);
+      getASTContext().ClassesToInstrument.insert(targetClass);
+    }
+    fclose(op);
+  } else {
+    llvm::errs() << "TARGET_TYPE_LIST_PATH is not pointing to a correct file.\n";
+  }
+
+    getASTContext().ReadClasses = true;
+  }
+  return getASTContext().ClassesToInstrument.find(this->getNameAsString()) != getASTContext().ClassesToInstrument.end();
+}
+
 void CXXRecordDecl::addedMember(Decl *D) {
   if (!D->isImplicit() &&
       !isa<FieldDecl>(D) &&
@@ -699,8 +790,9 @@ void CXXRecordDecl::addedMember(Decl *D) {
     data().HasOnlyCMembers = false;
 
   // Ignore friends and invalid declarations.
-  if (D->getFriendObjectKind() || D->isInvalidDecl())
+  if (D->getFriendObjectKind() || D->isInvalidDecl()) {
     return;
+  }
 
   auto *FunTmpl = dyn_cast<FunctionTemplateDecl>(D);
   if (FunTmpl)
@@ -716,9 +808,58 @@ void CXXRecordDecl::addedMember(Decl *D) {
 
   if (const auto *Method = dyn_cast<CXXMethodDecl>(D)) {
     if (Method->isVirtual()) {
+      if (getASTContext().getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && data().ForcePolymorphic && llvm::ClPolyClasses) {
+        data().ForcePolymorphic = false;
+      }
+
       // C++ [dcl.init.aggr]p1:
       //   An aggregate is an array or a class with [...] no virtual functions.
       data().Aggregate = false;
+
+      // C++ [class]p4:
+      //   A POD-struct is an aggregate class...
+      data().PlainOldData = false;
+
+      // C++14 [meta.unary.prop]p4:
+      //   T is a class type [...] with [...] no virtual member functions...
+      data().Empty = false;
+
+      // C++ [class.virtual]p1:
+      //   A class that declares or inherits a virtual function is called a
+      //   polymorphic class.
+      data().Polymorphic = true;
+
+      // C++11 [class.ctor]p5, C++11 [class.copy]p12, C++11 [class.copy]p25:
+      //   A [default constructor, copy/move constructor, or copy/move
+      //   assignment operator for a class X] is trivial [...] if:
+      //    -- class X has no virtual functions [...]
+      data().HasTrivialSpecialMembers &= SMF_Destructor;
+      data().HasTrivialSpecialMembersForCall &= SMF_Destructor;
+
+      // C++0x [class]p7:
+      //   A standard-layout class is a class that: [...]
+      //    -- has no virtual functions
+      data().IsStandardLayout = false;
+      data().IsCXX11StandardLayout = false;
+    }
+  }
+
+  // CXXRecordDecl::addedmembers
+  // Forcibly change non-poly to poly class during checking member function (if
+  // type class is parent class)
+  if ((this->isClass() || this->isStruct()) &&
+      (this->getNumBases() == 0) && // no parents, if parents we set from parent 
+      !data().Polymorphic &&
+      getASTContext().getLangOpts().Sanitize.has(SanitizerKind::TypePlus) && llvm::ClPolyClasses) {
+
+    if (!llvm::ClCastObjOpt || isOpt()) {
+      data().ForcePolymorphic = true;
+      
+      // Nicolas: We do not set Aggregate to false as the type might actually be it
+
+      // C++ [dcl.init.aggr]p1:
+      //   An aggregate is an array or a class with [...] no virtual functions.
+      //data().Aggregate = false;
 
       // C++ [class]p4:
       //   A POD-struct is an aggregate class...

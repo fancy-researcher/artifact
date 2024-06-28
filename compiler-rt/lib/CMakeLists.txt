@@ -45,6 +45,8 @@ if(COMPILER_RT_BUILD_SANITIZERS)
     add_subdirectory(ubsan)
   endif()
 
+  add_subdirectory(typeplus)
+
   foreach(sanitizer ${COMPILER_RT_SANITIZERS_TO_BUILD})
     compiler_rt_build_runtime(${sanitizer})
   endforeach()
@@ -64,10 +66,6 @@ endif()
 
 if(COMPILER_RT_BUILD_MEMPROF AND COMPILER_RT_HAS_SANITIZER_COMMON)
   compiler_rt_build_runtime(memprof)
-endif()
-
-if(COMPILER_RT_BUILD_ORC)
-  compiler_rt_build_runtime(orc)
 endif()
 
 # It doesn't normally make sense to build runtimes when a sanitizer is enabled,

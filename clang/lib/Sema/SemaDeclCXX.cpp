@@ -42,6 +42,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 #include <map>
 #include <set>
 
@@ -4817,7 +4818,8 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
   }
 
   if (!Field->getParent()->isUnion()) {
-    if (FieldBaseElementType->isReferenceType()) {
+    if (FieldBaseElementType->isReferenceType() &&
+      !SemaRef.Context.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
       SemaRef.Diag(Constructor->getLocation(),
                    diag::err_uninitialized_member_in_ctor)
       << (int)Constructor->isImplicit()
@@ -4826,8 +4828,8 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
       SemaRef.Diag(Field->getLocation(), diag::note_declared_at);
       return true;
     }
-
-    if (FieldBaseElementType.isConstQualified()) {
+    if (FieldBaseElementType.isConstQualified() &&
+        !SemaRef.Context.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
       SemaRef.Diag(Constructor->getLocation(),
                    diag::err_uninitialized_member_in_ctor)
       << (int)Constructor->isImplicit()
@@ -5566,11 +5568,12 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
 
     CXXDestructorDecl *Dtor = LookupDestructor(FieldClassDecl);
     assert(Dtor && "No dtor found for FieldClassDecl!");
-    CheckDestructorAccess(Field->getLocation(), Dtor,
-                          PDiag(diag::err_access_dtor_field)
-                            << Field->getDeclName()
-                            << FieldType);
-
+    if (!getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+      CheckDestructorAccess(Field->getLocation(), Dtor,
+                            PDiag(diag::err_access_dtor_field)
+                              << Field->getDeclName()
+                              << FieldType);
+    }
     MarkFunctionReferenced(Location, Dtor);
     DiagnoseUseOfDecl(Dtor, Location);
   }
@@ -5614,10 +5617,12 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
     assert(Dtor && "No dtor found for BaseClassDecl!");
 
     // FIXME: caret should be on the start of the class name
-    CheckDestructorAccess(Base.getBeginLoc(), Dtor,
-                          PDiag(diag::err_access_dtor_base)
-                              << Base.getType() << Base.getSourceRange(),
-                          Context.getTypeDeclType(ClassDecl));
+    if (!getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+      CheckDestructorAccess(Base.getBeginLoc(), Dtor,
+                            PDiag(diag::err_access_dtor_base)
+                                << Base.getType() << Base.getSourceRange(),
+                            Context.getTypeDeclType(ClassDecl));
+    }
 
     MarkFunctionReferenced(Location, Dtor);
     DiagnoseUseOfDecl(Dtor, Location);
@@ -8891,7 +8896,9 @@ bool SpecialMemberDeletionInfo::shouldDeleteForSubobjectCall(
     // must be accessible and non-deleted, but need not be trivial. Such a
     // destructor is never actually called, but is semantically checked as
     // if it were.
-    DiagKind = 4;
+    if (!S.Context.getLangOpts().Sanitize.has(SanitizerKind::TypePlus)) {
+      DiagKind = 4;
+    }
   }
 
   if (DiagKind == -1)
@@ -9150,6 +9157,13 @@ bool Sema::ShouldDeleteSpecialMember(CXXMethodDecl *MD, CXXSpecialMember CSM,
                                      bool Diagnose) {
   if (MD->isInvalidDecl())
     return false;
+
+  if (LangOpts.Sanitize.has(SanitizerKind::TypePlus) && llvm::ClVtableStandard) {
+    CXXRecordDecl *RD = MD->getParent();
+    if (RD && RD->isForcePoly())
+      return false;
+  }
+
   CXXRecordDecl *RD = MD->getParent();
   assert(!RD->isDependentType() && "do deletion after instantiation");
   if (!LangOpts.CPlusPlus11 || RD->isInvalidDecl())
@@ -9702,6 +9716,9 @@ bool Sema::SpecialMemberIsTrivial(CXXMethodDecl *MD, CXXSpecialMember CSM,
         return false;
       }
     }
+
+    if (LangOpts.Sanitize.has(SanitizerKind::TypePlus))
+      return false;
 
     llvm_unreachable("dynamic class with no vbases and no virtual functions");
   }
@@ -13214,8 +13231,8 @@ CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
   //   user-declared constructor for class X, a default constructor is
   //   implicitly declared. An implicitly-declared default constructor
   //   is an inline public member of its class.
-  assert(ClassDecl->needsImplicitDefaultConstructor() &&
-         "Should not build implicit default constructor!");
+  //assert(ClassDecl->needsImplicitDefaultConstructor() &&
+  //       "Should not build implicit default constructor!");
 
   DeclaringSpecialMember DSM(*this, ClassDecl, CXXDefaultConstructor);
   if (DSM.isAlreadyBeingDeclared())
@@ -13297,6 +13314,42 @@ void Sema::DefineImplicitDefaultConstructor(SourceLocation CurrentLocation,
     Constructor->setInvalidDecl();
     return;
   }
+
+  SourceLocation Loc = Constructor->getEndLoc().isValid()
+                           ? Constructor->getEndLoc()
+                           : Constructor->getLocation();
+  Constructor->setBody(new (Context) CompoundStmt(Loc));
+  Constructor->markUsed(Context);
+
+  if (ASTMutationListener *L = getASTMutationListener()) {
+    L->CompletedImplicitDefinition(Constructor);
+  }
+
+  DiagnoseUninitializedFields(*this, Constructor);
+}
+
+void Sema::TypePPDefineImplicitDefaultConstructor(SourceLocation CurrentLocation,
+                                            CXXConstructorDecl *Constructor) {
+  // This is the same constructor as above but does not initialize the fields to
+  // avoid calls to the fields constructor that might not exist. It should onlyt
+  // set the vptr.
+  if (Constructor->willHaveBody() || Constructor->isInvalidDecl()) {
+    return;
+  }
+
+  CXXRecordDecl *ClassDecl = Constructor->getParent();
+  assert(ClassDecl && "DefineImplicitDefaultConstructor - invalid constructor");
+
+  SynthesizedFunctionScope Scope(*this, Constructor);
+
+  // The exception specification is needed because we are defining the
+  // function.
+  ResolveExceptionSpec(CurrentLocation,
+                       Constructor->getType()->castAs<FunctionProtoType>());
+  MarkVTableUsed(CurrentLocation, ClassDecl, true);
+
+  // Add a context note for diagnostics produced after this point.
+  Scope.addContextNote(CurrentLocation);
 
   SourceLocation Loc = Constructor->getEndLoc().isValid()
                            ? Constructor->getEndLoc()

@@ -73,6 +73,9 @@ SANITIZER("fuzzer-no-link", FuzzerNoLink)
 // ThreadSanitizer
 SANITIZER("thread", Thread)
 
+// TypePlus
+SANITIZER("typeplus", TypePlus)
+
 // LeakSanitizer
 SANITIZER("leak", Leak)
 

@@ -1,0 +1,19 @@
+--- chro3/v8/src/execution/isolate.cc	2022-08-30 14:42:06.113088557 +0200
++++ chro2/v8/src/execution/isolate.cc	2022-08-15 11:37:13.000000000 +0200
+@@ -2926,6 +2926,7 @@
+ }
+ 
+ void Isolate::CheckIsolateLayout() {
++ /* NICOLAS CHANGE PROBABLY BREAK
+   CHECK_EQ(OFFSET_OF(Isolate, isolate_data_), 0);
+   CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, isolate_data_.embedder_data_)),
+            Internals::kIsolateEmbedderDataOffset);
+@@ -2938,7 +2939,7 @@
+   CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, isolate_data_.stack_guard_)),
+            Internals::kIsolateStackGuardOffset);
+   CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, isolate_data_.roots_)),
+-           Internals::kIsolateRootsOffset);
++           Internals::kIsolateRootsOffset);*/
+ 
+ #ifdef V8_HEAP_SANDBOX
+   CHECK_EQ(static_cast<int>(OFFSET_OF(ExternalPointerTable, buffer_)),

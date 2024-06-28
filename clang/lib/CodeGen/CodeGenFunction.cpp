@@ -45,6 +45,9 @@
 #include "llvm/Support/CRC.h"
 #include "llvm/Transforms/Scalar/LowerExpectIntrinsic.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
+
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -94,6 +97,28 @@ CodeGenFunction::~CodeGenFunction() {
   // been "emitted" to the outside, thus, modifications are still sensible.
   if (CGM.getLangOpts().OpenMPIRBuilder && CurFn)
     CGM.getOpenMPRuntime().getOMPBuilder().finalize(CurFn);
+
+  if (getenv("TYPEPLUS_LOG_PATH") != nullptr) {
+    #define MAXLEN 1000
+    char fileName[MAXLEN];
+    char tmp[MAXLEN];
+    strcpy(fileName, getenv("TYPEPLUS_LOG_PATH"));
+    strcpy(fileName, "/typeinfo.txt");
+    std::map<uint64_t, HashSet*>::iterator it;
+    for (it = TypeParentInfo.begin(); it != TypeParentInfo.end(); ++it) {
+      for (uint64_t parent : *it->second) {
+        sprintf(tmp, "1 %" PRIu64" %" PRIu64"", it->first, parent);
+        HexTypeUtil.writeInfoToFile(tmp, fileName);
+      }
+    }
+
+    for (it = TypePhantomInfo.begin(); it != TypePhantomInfo.end(); ++it) {
+      for (uint64_t parent : *it->second) {
+        sprintf(tmp, "2 %" PRIu64" %" PRIu64"", it->first, parent);
+        HexTypeUtil.writeInfoToFile(tmp, fileName);
+      }
+    }
+  }
 }
 
 // Map the LangOption for exception behavior into

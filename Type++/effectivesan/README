@@ -1,0 +1,12 @@
+# Install
+
+To install, follow the guide here: https://github.com/GJDuck/EffectiveSan
+
+TL;DR;
+
+```bash
+<after building Dockerfile>
+git clone https://github.com/GJDuck/EffectiveSan.git
+cd EffectiveSan
+./build.sh
+```

@@ -1,0 +1,135 @@
+diff --color -Naur blender_src_original_new/blender/source/blender/render/intern/raytrace/bvh.h blender_src_patched/blender/source/blender/render/intern/raytrace/bvh.h
+--- blender_src_original_new/blender/source/blender/render/intern/raytrace/bvh.h	2022-02-01 17:59:34.875060812 +0100
++++ blender_src_patched/blender/source/blender/render/intern/raytrace/bvh.h	2022-02-01 17:59:12.470873265 +0100
+@@ -185,7 +185,19 @@
+ 			}
+ 		}
+ 		else {
+-			hit |= RE_rayobject_intersect( (RayObject *)node, isec);
++			
++/* used to unalign a given ray object */
++			RayObject* ro;
++			if(RE_rayobject_isRayAPI(node)) {
++				ro = RE_rayobject_unalignRayAPI(RE_rayobject_align(node));
++			} else if(RE_rayobject_isRayFace(node)) {
++				ro = RE_rayobject_unalignRayFace(RE_rayobject_align(node));
++			} else if(RE_rayobject_isRayAPI(node)) {
++				ro = RE_rayobject_unalignRayAPI(RE_rayobject_align(node));
++			} else {
++				ro = (RayObject*) node;
++			}
++			hit |= RE_rayobject_intersect(ro, isec);
+ 			if (SHADOW && hit) return hit;
+ 		}
+ 	}
+@@ -395,13 +407,16 @@
+ 	Tree *obj = (Tree *)MEM_callocN(sizeof(Tree), "BVHTree");
+ 	assert(RE_rayobject_isAligned(obj)); /* RayObject API assumes real data to be 4-byte aligned */
+ 	
+-	obj->rayobj.api = bvh_get_api<Tree>(DFS_STACK_SIZE);
++	obj->api = bvh_get_api<Tree>(DFS_STACK_SIZE);
++	// obj->rayobj.api = bvh_get_api<Tree>(DFS_STACK_SIZE);
+ 	obj->root = NULL;
+ 	
+ 	obj->node_arena = NULL;
+ 	obj->builder    = rtbuild_create(size);
+ 	
+ 	return RE_rayobject_unalignRayAPI((RayObject *) obj);
++	// return &obj->rayobj;
++	// return RE_rayobject_unalignRayAPI(&obj->rayobj);
+ }
+ 
+ #endif
+diff --color -Naur blender_src_original_new/blender/source/blender/render/intern/raytrace/rayobject_internal.h blender_src_patched/blender/source/blender/render/intern/raytrace/rayobject_internal.h
+--- blender_src_original_new/blender/source/blender/render/intern/raytrace/rayobject_internal.h	2022-02-01 17:59:34.875060812 +0100
++++ blender_src_patched/blender/source/blender/render/intern/raytrace/rayobject_internal.h	2022-02-01 17:59:12.470873265 +0100
+@@ -116,6 +116,9 @@
+  */
+ 
+ struct RayObject {
++#ifdef IS_TYPEXX
++        uintptr_t _vptrRayObj;
++#endif
+ 	struct RayObjectAPI *api;
+ 	struct RayObjectControl control;
+ };
+diff --color -Naur blender_src_original_new/blender/source/blender/render/intern/raytrace/rayobject_vbvh.cpp blender_src_patched/blender/source/blender/render/intern/raytrace/rayobject_vbvh.cpp
+--- blender_src_original_new/blender/source/blender/render/intern/raytrace/rayobject_vbvh.cpp	2022-02-01 17:59:34.875060812 +0100
++++ blender_src_patched/blender/source/blender/render/intern/raytrace/rayobject_vbvh.cpp	2022-02-01 17:59:12.470873265 +0100
+@@ -52,13 +52,15 @@
+ #include "bvh.h"
+ #include "vbvh.h"
+ 
++#include "rayobject_internal.h"
++
+ #include <queue>
+ #include <algorithm>
+ 
+ #define DFS_STACK_SIZE  256
+ 
+-struct VBVHTree {
+-	RayObject rayobj;
++struct VBVHTree: RayObject {
++	// RayObject rayobj;
+ 	VBVHNode *root;
+ 	MemArena *node_arena;
+ 	float cost;
+@@ -78,7 +80,8 @@
+ template<>
+ void bvh_done<VBVHTree>(VBVHTree *obj)
+ {
+-	rtbuild_done(obj->builder, &obj->rayobj.control);
++	// rtbuild_done(obj->builder, &obj->rayobj.control);
++	rtbuild_done(obj->builder, &obj->control);
+ 	
+ 	//TODO find a away to exactly calculate the needed memory
+ 	MemArena *arena1 = BLI_memarena_new(BLI_MEMARENA_STD_BUFSIZE, "vbvh arena");
+@@ -86,8 +89,10 @@
+ 	
+ 	//Build and optimize the tree
+ 	if (1) {
+-		VBVHNode *root = BuildBinaryVBVH<VBVHNode>(arena1, &obj->rayobj.control).transform(obj->builder);
+-		if (RE_rayobjectcontrol_test_break(&obj->rayobj.control)) {
++		// VBVHNode *root = BuildBinaryVBVH<VBVHNode>(arena1, &obj->rayobj.control).transform(obj->builder);
++		VBVHNode *root = BuildBinaryVBVH<VBVHNode>(arena1, &obj->control).transform(obj->builder);
++		// if (RE_rayobjectcontrol_test_break(&obj->rayobj.control)) {
++		if (RE_rayobjectcontrol_test_break(&obj->control)) {
+ 			BLI_memarena_free(arena1);
+ 			return;
+ 		}
+diff --color -Naur blender_src_original_new/blender/source/blender/render/intern/raytrace/vbvh.h blender_src_patched/blender/source/blender/render/intern/raytrace/vbvh.h
+--- blender_src_original_new/blender/source/blender/render/intern/raytrace/vbvh.h	2022-02-01 17:59:34.875060812 +0100
++++ blender_src_patched/blender/source/blender/render/intern/raytrace/vbvh.h	2022-02-01 17:59:12.470873265 +0100
+@@ -149,7 +149,12 @@
+ 		}
+ 		return NULL;
+ 	}
+-	
++
++/* used to unalign a given ray object */
++#define RE_NODE_rayobject_unalignRayFace(o)			((Node *)(((intptr_t)o)|1))
++#define RE_NODE_rayobject_unalignRayAPI(o)			((Node *)(((intptr_t)o)|2))
++#define RE_NODE_rayobject_unalignVlakPrimitive(o)	((Node *)(((intptr_t)o)|3))
++
+ 	Node *_transform(RTBuilder *builder)
+ 	{
+ 		int size = rtbuild_size(builder);
+@@ -161,7 +166,17 @@
+ 			Node *node = create_node();
+ 			INIT_MINMAX(node->bb, node->bb + 3);
+ 			rtbuild_merge_bb(builder, node->bb, node->bb + 3);
+-			node->child = (Node *) rtbuild_get_primitive(builder, 0);
++			RayObject* r = rtbuild_get_primitive(builder, 0);
++			RayObject* r2 = RE_rayobject_align(r);
++			if(RE_rayobject_isRayFace(r)) {
++				node->child = RE_NODE_rayobject_unalignRayFace(r2);
++			} else if(RE_rayobject_isRayAPI(r)) {
++				node->child = RE_NODE_rayobject_unalignRayAPI(r2);
++			} else if (RE_rayobject_isVlakPrimitive(r)) {
++				node->child = RE_NODE_rayobject_unalignVlakPrimitive(r2);
++			} else {
++				node->child = (Node*)r;
++			}
+ 			return node;
+ 		}
+ 		else {

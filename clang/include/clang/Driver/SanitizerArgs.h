@@ -15,6 +15,7 @@
 #include "llvm/Transforms/Instrumentation/AddressSanitizerOptions.h"
 #include <string>
 #include <vector>
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 
 namespace clang {
 namespace driver {
@@ -80,6 +81,12 @@ public:
   bool needsTsanRt() const { return Sanitizers.has(SanitizerKind::Thread); }
   bool needsMsanRt() const { return Sanitizers.has(SanitizerKind::Memory); }
   bool needsFuzzer() const { return Sanitizers.has(SanitizerKind::Fuzzer); }
+  bool needsTypePlusRt() const { 
+    return Sanitizers.has(SanitizerKind::TypePlus) || llvm::ClTypePlusProfiling;
+  }
+  bool needsOnlyTypePlusRt() const {
+    return Sanitizers.has(SanitizerKind::CFIDerivedCast) || Sanitizers.has(SanitizerKind::CFIUnrelatedCast); 
+  }
   bool needsLsanRt() const {
     return Sanitizers.has(SanitizerKind::Leak) &&
            !Sanitizers.has(SanitizerKind::Address) &&

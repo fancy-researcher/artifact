@@ -312,7 +312,7 @@ template <class _Tp, class _Allocator>
 __split_buffer<_Tp, _Allocator>::__split_buffer(size_type __cap, size_type __start, __alloc_rr& __a)
     : __end_cap_(nullptr, __a)
 {
-    __first_ = __cap != 0 ? __alloc_traits::allocate(__alloc(), __cap) : nullptr;
+    __first_ = __cap != 0 ? __alloc_traits::allocate(__alloc(), __cap) : ((pointer)nullptr);
     __begin_ = __end_ = __first_ + __start;
     __end_cap() = __first_ + __cap;
 }

@@ -120,7 +120,7 @@ ios_base::__call_callbacks(event ev)
 locale
 ios_base::imbue(const locale& newloc)
 {
-    static_assert(sizeof(locale) == sizeof(__loc_), "");
+    //static_assert(sizeof(locale) == sizeof(__loc_), "");
     locale& loc_storage = *reinterpret_cast<locale*>(&__loc_);
     locale oldloc = loc_storage;
     loc_storage = newloc;

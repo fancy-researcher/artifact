@@ -37,6 +37,8 @@
 #endif
 
 FEATURE(speculative_load_hardening, LangOpts.SpeculativeLoadHardening)
+FEATURE(typeplus,
+        LangOpts.Sanitize.hasOneOf(SanitizerKind::TypePlus))
 FEATURE(address_sanitizer,
         LangOpts.Sanitize.hasOneOf(SanitizerKind::Address |
                                    SanitizerKind::KernelAddress))

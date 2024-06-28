@@ -64,6 +64,7 @@
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/TimeProfiler.h"
 
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -6303,7 +6304,8 @@ llvm::Metadata *CodeGenModule::CreateMetadataIdentifierGeneralized(QualType T) {
 bool CodeGenModule::NeedAllVtablesTypeId() const {
   // Returns true if at least one of vtable-based CFI checkers is enabled and
   // is not in the trapping mode.
-  return ((LangOpts.Sanitize.has(SanitizerKind::CFIVCall) &&
+  return ((LangOpts.Sanitize.has(SanitizerKind::TypePlus) && llvm::ClVtableStandard) ||
+          (LangOpts.Sanitize.has(SanitizerKind::CFIVCall) &&
            !CodeGenOpts.SanitizeTrap.has(SanitizerKind::CFIVCall)) ||
           (LangOpts.Sanitize.has(SanitizerKind::CFINVCall) &&
            !CodeGenOpts.SanitizeTrap.has(SanitizerKind::CFINVCall)) ||

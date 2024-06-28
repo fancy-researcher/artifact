@@ -74,6 +74,7 @@
 #include "llvm/Transforms/Instrumentation/MemProfiler.h"
 #include "llvm/Transforms/Instrumentation/MemorySanitizer.h"
 #include "llvm/Transforms/Instrumentation/SanitizerCoverage.h"
+#include "llvm/Transforms/Instrumentation/HexType.h"
 #include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Scalar.h"
@@ -86,6 +87,7 @@
 #include "llvm/Transforms/Utils/EntryExitInstrumenter.h"
 #include "llvm/Transforms/Utils/NameAnonGlobals.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
+
 #include <memory>
 using namespace clang;
 using namespace llvm;
@@ -214,6 +216,11 @@ static void addAddDiscriminatorsPass(const PassManagerBuilder &Builder,
 static void addBoundsCheckingPass(const PassManagerBuilder &Builder,
                                   legacy::PassManagerBase &PM) {
   PM.add(createBoundsCheckingLegacyPass());
+}
+
+static void addHexTypePass(const PassManagerBuilder &Builder,
+                                    PassManagerBase &PM) {
+  PM.add(createHexTypePass());
 }
 
 static SanitizerCoverageOptions
@@ -798,20 +805,13 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                            addDataFlowSanitizerPass);
   }
 
-  if (CodeGenOpts.InstrumentFunctions ||
-      CodeGenOpts.InstrumentFunctionEntryBare ||
-      CodeGenOpts.InstrumentFunctionsAfterInlining ||
-      CodeGenOpts.InstrumentForProfiling) {
-    PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
-                           addEntryExitInstrumentationPass);
+  if (LangOpts.Sanitize.has(SanitizerKind::TypePlus)) {
+    PMBuilder.addExtension(PassManagerBuilder::EP_ModuleOptimizerEarly,
+                           addHexTypePass);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
-                           addEntryExitInstrumentationPass);
-    PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
-                           addPostInlineEntryExitInstrumentationPass);
-    PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
-                           addPostInlineEntryExitInstrumentationPass);
+                          addHexTypePass); 
   }
-
+  
   // Set up the per-function pass manager.
   FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
   if (CodeGenOpts.VerifyModule)
@@ -1143,6 +1143,9 @@ static void addSanitizers(const Triple &TargetTriple,
     if (LangOpts.Sanitize.has(SanitizerKind::Thread)) {
       MPM.addPass(ThreadSanitizerPass());
       MPM.addPass(createModuleToFunctionPassAdaptor(ThreadSanitizerPass()));
+    }
+    if (LangOpts.Sanitize.has(SanitizerKind::TypePlus)) {
+      MPM.addPass(HexTypePass());
     }
 
     auto ASanPass = [&](SanitizerMask Mask, bool CompileKernel) {

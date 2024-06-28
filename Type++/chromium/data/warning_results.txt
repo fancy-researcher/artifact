@@ -1,0 +1,7 @@
+/tmp/chromium/warning
+phantom 0
+uninit  1
+reinter 625
+sizeof  588
+total   1214
+/home/nbadoux/LLVM-typepp/Type++/chromium

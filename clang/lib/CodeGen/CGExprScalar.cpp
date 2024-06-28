@@ -10,46 +10,70 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Address.h"
 #include "CGCXXABI.h"
+#include "CGCall.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
 #include "CGOpenMPRuntime.h"
+#include "CGValue.h"
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
 #include "ConstantEmitter.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/Attrs.inc"
+#include "clang/AST/DeclBase.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
+#include "clang/AST/OperationKinds.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/StmtVisitor.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Sema/Initialization.h"
+#include "clang/Sema/Sema.h"
 #include "llvm/ADT/APFixedPoint.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/FixedPointBuilder.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/MatrixBuilder.h"
 #include "llvm/IR/Module.h"
-#include <cstdarg>
+#include "llvm/Transforms/Utils/HexTypeUtil.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/IR/Type.h"
+#include <string>
+#include <unistd.h>
+#include <stdlib.h>
 
 using namespace clang;
 using namespace CodeGen;
 using llvm::Value;
 
+#define MAXLEN 1000
+
 //===----------------------------------------------------------------------===//
 //                         Scalar Expression Emitter
 //===----------------------------------------------------------------------===//
-
 namespace {
 
 /// Determine whether the given binary operation may overflow.
@@ -568,6 +592,8 @@ public:
     return VisitCastExpr(E);
   }
   Value *VisitCastExpr(CastExpr *E);
+  Expr* getExprToMangle(MaterializeTemporaryExpr* mte, llvm::Value *&v);
+  SmallVector<llvm::Value*, 4> doArgs(CXXConstructorDecl* target);
 
   Value *VisitCallExpr(const CallExpr *E) {
     if (E->getCallReturnType(CGF.getContext())->isReferenceType())
@@ -1972,6 +1998,253 @@ bool CodeGenFunction::ShouldNullCheckClassCastValue(const CastExpr *CE) {
   return true;
 }
 
+bool CodeGenFunction::isPoolCustomAllocator(std::string fun_name, std::string class_name = "") {
+  // white list for class->method allocators
+  std::set<std::pair<std::string, std::string>> custom_allocator_class_functions_set= {
+    std::make_pair("class xercesc_2_5::MemoryManager", "allocate"), // actually a pool allocator for xalan 2006
+    std::make_pair("class xercesc_2_5::MemoryManager *", "allocate"), // actually a pool allocator for xalan 2006
+    std::make_pair("class xercesc_2_5::DOMDocumentImpl *", "allocate"), // actually a pool allocator for xalan 2006
+  };
+  std::set<std::string> custom_allocator_set {
+    "BLI_memarena_alloc", // BLENDER
+    "BLI_memarena_calloc", // BLENDER
+  };
+
+  std::pair<std::string, std::string> pair_class_function = std::make_pair(class_name, fun_name);
+  return custom_allocator_class_functions_set.find(pair_class_function) != custom_allocator_class_functions_set.end()
+    || custom_allocator_set.find(fun_name) != custom_allocator_set.end();
+}
+
+bool CodeGenFunction::isCustomAllocator(std::string fun_name, std::string class_name = "") {
+  std::set<std::pair<std::string, std::string>> custom_allocator_class_functions_set= {};
+  std::set<std::string> custom_allocator_set { 
+    "malloc", 
+    "calloc", 
+    //"allocate",
+    "realloc",
+    "operator new", 
+    "__libcpp_allocate",
+    "MEM_callocN", // BLENDER
+    "MEM_mallocN", // BLENDER
+    "MEM_mallocNalligned", // BLENDER
+    "MEM_lockfree_mapallocN", // BLENDER
+    "MEM_mapallocN", // BLENDER
+    "MEM_dupallocN", // BLENDER
+    "expryyalloc", // OMNEPT
+    "pov_malloc", // POVRAY 2006 & 2017
+    "pov_realloc", // POVRAY 2006 & 2017
+    "pov_calloc", // POVRAY 2006 & 2017
+    "theManager", // XALANBMK 2006 & 2017
+    //"spx_alloc", // SOPLEX 2006
+    "__aligned_malloc_with_fallback" // libcxxabi cxa_exception
+  };
+
+  std::pair<std::string, std::string> pair_class_function = std::make_pair(class_name, fun_name);
+  return custom_allocator_class_functions_set.find(pair_class_function) != custom_allocator_class_functions_set.end()
+    || custom_allocator_set.find(fun_name) != custom_allocator_set.end();
+}
+
+
+AllocatorTypeAndMetaDataSize CodeGenFunction::isAllocatorCast(Stmt *CurStmt) {
+
+  AllocatorTypeAndMetaDataSize res = std::make_pair(AllocatorType::NOT_ALLOCATOR, 0);
+  bool debug = false;
+  
+  for (Stmt *Child : CurStmt->children()) {
+    std::string fun_name;
+    std::string class_name;
+    if (const auto *Exp = dyn_cast<MemberExpr>(Child)) {
+      fun_name = Exp->getMemberNameInfo().getAsString();
+      for (Stmt *subChild: Child->children()) {
+        Expr*  subExpr;
+        switch(subChild->getStmtClass()) {
+          case Stmt::ImplicitCastExprClass:
+            subExpr = dyn_cast<ImplicitCastExpr>(subChild);
+            break;
+          case Stmt::MemberExprClass:
+            subExpr = dyn_cast<MemberExpr>(subChild);
+            break;
+          default:
+            continue;
+        }
+        assert (subExpr != nullptr && "subExpr is not of expected type");
+        QualType tt = subExpr->getType();
+        if (tt->isAnyPointerType()) {
+          tt = tt->getPointeeType();
+        }
+        class_name = tt.getAsString();
+      }
+    } else if (const auto *Exp = dyn_cast<DeclRefExpr>(Child)) {
+      const ValueDecl* decl = Exp->getDecl();
+      if(isa<FunctionDecl>(decl) || isa<VarDecl>(decl)) {
+        fun_name = decl->getNameAsString().c_str();
+      }
+    }
+
+    bool pool = isPoolCustomAllocator(fun_name, class_name);
+    bool custom = isCustomAllocator(fun_name, class_name);
+    if(debug && (pool || custom)) {
+      llvm::errs() << "Found allocator " << class_name << (class_name != "" ?  "->" : "") << fun_name <<  "\n";
+    }
+    int8_t header = needsHeaderSpace(fun_name, class_name);
+    if(pool) {
+      return std::make_pair(AllocatorType::POOL_ALLOCATOR, header);
+    }
+    if (custom) {
+      return std::make_pair(AllocatorType::ALLOCATOR, header);
+    }
+
+    // recursive call to child
+    res = isAllocatorCast(Child);
+    if(res.first != AllocatorType::NOT_ALLOCATOR) {
+      // return if found
+      break;
+    }
+  }
+  return res; 
+}
+
+
+/// @brief This function checks if the malloc used is a custom one using some
+/// extra metadata. To do that, it check the corresponding ENVIRONMENT variable.
+/// The metadata size has to be passed via this environment variable.
+/// @param callToMalloc the instruction reprensting the call to the malloc.like
+///        function.
+/// @return Return the size of the metadata header used by the malloc-like
+///        function. 0 if not a custom malloc.
+int8_t CodeGenFunction::needsHeaderSpace(std::string fun_name, std::string class_name = "") {
+  // retrieve the header size from an env variable
+  bool debug = false;
+  if(fun_name.find("pov_") != std::string::npos // target allocator: pov_malloc, pov_calloc, pov_realloc
+      || fun_name.find("MEM_") != std::string::npos // some of blender allocators
+//  || (functionName.find("xercesc_2_7") != string::npos && functionName.find("MemoryManager") != string::npos) // tagret allocator: _ZN11xercesc_2_77XMemorynwEmPNS_13MemoryManagerE
+  ) {
+
+    if (getenv("CUSTOM_HEADER_SIZE") == nullptr) {
+      llvm::errs() << "Env. var 'CUSTOM_HEADER_SIZE' unset\n";
+      abort();
+    }
+    int8_t val = strtoul(getenv("CUSTOM_HEADER_SIZE"), nullptr, 10);
+    if(debug) {
+      llvm::errs() << "Header size: " << std::to_string(val) << "\n";
+    }
+    return val;
+  }
+  return 0;
+}
+
+
+void CodeGenFunction::printMallocInfo(std::string fmt, std::vector<Value*> printArgs) {
+  // Add a call to printf with size and loop info
+  std::vector<llvm::Type *> args;
+  args.push_back(llvm::Type::getInt8PtrTy(getLLVMContext()));
+  llvm::FunctionType *printfType =
+      llvm::FunctionType::get(Builder.getInt32Ty(), args, true);
+  llvm::Function::Create(printfType, llvm::Function::ExternalLinkage, "printf", CGM.getModule());
+  Value *formatStr = Builder.CreateGlobalStringPtr(fmt);
+  printArgs.insert(printArgs.begin(), formatStr);
+  Builder.CreateCall(CGM.getModule().getFunction("printf"), printArgs);
+
+}
+
+
+bool isAllocCall(llvm::CallBase *val, const llvm::TargetLibraryInfo *tli) {
+  // is it a call to an alocation function?
+  return llvm::isAllocationFn(val, tli) &&
+      (llvm::isMallocLikeFn(val, tli) || llvm::isCallocLikeFn(val, tli) ||
+       !llvm::isAllocLikeFn(val, tli));
+}
+
+std::pair<Value*, Value*> CodeGenFunction::numberOfConstructorCall(llvm::CallBase* callToMalloc, llvm::Type* allocatedType, AllocatorType allocatorType, int8_t custom_header_size) {
+  
+  bool debug = false;
+
+  llvm::Module& M = CGM.getModule();
+  llvm::TargetLibraryInfoImpl tlii;
+  llvm::TargetLibraryInfo *tli = new llvm::TargetLibraryInfo(tlii);
+
+  llvm::FunctionCallee mallocUsableSize = M.getOrInsertFunction("malloc_usable_size", Builder.getInt32Ty(), Builder.getInt8PtrTy());
+
+  Value* alreadyAllocatedSpace = Builder.getInt32(0);
+  bool isRealloc = isReallocLikeFn(callToMalloc, tli);
+  if (isRealloc) {
+    // To find the location of the header block of libc++ malloc, we
+    // have to remove some possible custom header block in custom malloc.
+    if (debug) {
+      llvm::errs() << "Realloc constuctor\n";
+      llvm::errs() << "before: "<< *Builder.GetInsertBlock() << "\n";
+    }
+    // Set the builder location to just before call to malloc
+    llvm::BasicBlock* bb = Builder.GetInsertBlock();
+    Builder.SetInsertPoint(callToMalloc);
+    
+    // 0 if realloc with null pointer, -headerSize otherwise
+    Value* needHeaderSize = Builder.CreateMul(Builder.CreateIntCast(Builder.CreateIsNotNull(*callToMalloc->arg_begin()), Builder.getInt32Ty(), false), Builder.getInt32(-custom_header_size));
+      
+    Value* headerMetaDataLocation = Builder.CreateGEP( (*callToMalloc->arg_begin())->getType()->getScalarType()->getPointerElementType(), *callToMalloc->arg_begin(), needHeaderSize);
+    alreadyAllocatedSpace = Builder.CreateCall(mallocUsableSize,  headerMetaDataLocation);
+    if (debug) {
+      llvm::errs() << "after: "<< *Builder.GetInsertBlock() << "\n";
+    }
+    // Set the builder location right after call to malloc
+    Builder.SetInsertPoint(bb);
+  }
+
+  // We had a case in xalan with pool allocator returning addresses on which we can't call malloc_usable_size, we fallback to the size announced in the malloc call in this case.
+  Value* allocatedSpaceAfterCall;
+  if(allocatorType == AllocatorType::ALLOCATOR) {
+    // Calling malloc_usable_size on the start of the allocated memory, we have to
+    // remove the libc++ header
+    Value* memoryWithHeaderRemoved = Builder.CreateGEP(callToMalloc->getType()->getScalarType()->getPointerElementType(), callToMalloc, Builder.getInt32(-custom_header_size));
+    allocatedSpaceAfterCall = Builder.CreateCall(mallocUsableSize,  memoryWithHeaderRemoved);
+  } else if(allocatorType == AllocatorType::POOL_ALLOCATOR) {
+    allocatedSpaceAfterCall = Builder.CreateTruncOrBitCast(callToMalloc->arg_end()[-1], Builder.getInt32Ty());
+  } else {
+    llvm::errs() << "Unssupported allocator type in NumberOfConstructorCall\n";
+    abort();
+  }
+
+  Value* allocatedSpaceWithoutCustomHeader = Builder.CreateSub(allocatedSpaceAfterCall, Builder.getInt32(custom_header_size));
+  Value* allocatedTypeSize32 = Builder.CreateTruncOrBitCast(llvm::ConstantExpr::getSizeOf(allocatedType), Builder.getInt32Ty());
+  Value* loopEndVal = Builder.CreateUDiv(allocatedSpaceWithoutCustomHeader, allocatedTypeSize32);
+
+  Value *loopStartVal = Builder.getInt32(0); // unit: number of object
+  if(isRealloc) {
+    // We will call the constructor for the elements missing the
+    // constructor aka the element after the previous malloc.
+    // [----------------------|----------------------------]
+    //  ^- allready allocated    ^- newly allocated
+    //                            (we'll call only here, so adapt start value of
+    //                            loop)
+    Value* numberAlreadyAllocatedObject = Builder.CreateUDiv(alreadyAllocatedSpace, allocatedTypeSize32);
+    loopStartVal = Builder.CreateAdd(numberAlreadyAllocatedObject, Builder.getInt32(0));
+  }
+
+  std::vector<Value *> printArgs;
+  if(debug) {
+    llvm::errs( ) << "got some stuff\n";
+    //Print malloc values at runtime
+    std::string fmt;
+    fmt = "\tStartVal: %d\n"
+    "Ptr: %p\n"
+    "Malloc usable: %d\n"
+    "Type size: %d\n"
+    "end usable: %d\n"
+    "\t  Endval: %d\n";
+    if(isRealloc) {
+      fmt = fmt + "Realloc\n";
+    }
+    printArgs.push_back(loopStartVal);
+    printArgs.push_back(*callToMalloc->arg_begin());
+    printArgs.push_back(alreadyAllocatedSpace);
+    printArgs.push_back(allocatedTypeSize32);
+    printArgs.push_back(allocatedSpaceAfterCall);
+    printArgs.push_back(loopEndVal);
+    printMallocInfo(fmt, printArgs);
+  }
+  return std::make_pair(loopStartVal, Builder.CreateSub(loopEndVal, loopStartVal));
+}
+
 // VisitCastExpr - Emit code for an explicit or implicit cast.  Implicit casts
 // have to handle a more broad range of conversions than explicit casts, as they
 // handle things like function to ptr-to-function decay etc.
@@ -2020,14 +2293,6 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
         SrcTy->getPointerAddressSpace() != DstTy->getPointerAddressSpace()) {
       llvm_unreachable("wrong cast for pointers in different address spaces"
                        "(must be an address space cast)!");
-    }
-
-    if (CGF.SanOpts.has(SanitizerKind::CFIUnrelatedCast)) {
-      if (auto PT = DestTy->getAs<PointerType>())
-        CGF.EmitVTablePtrCheckForCast(PT->getPointeeType(), Src,
-                                      /*MayBeNull=*/true,
-                                      CodeGenFunction::CFITCK_UnrelatedCast,
-                                      CE->getBeginLoc());
     }
 
     if (CGF.CGM.getCodeGenOpts().StrictVTablePointers) {
@@ -2105,7 +2370,204 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
       return EmitLoadOfLValue(DestLV, CE->getExprLoc());
     }
 
-    return Builder.CreateBitCast(Src, DstTy);
+
+    // VTable: To insert constructor calling instrumentation
+    bool debug = false;
+    if (CGF.SanOpts.has(SanitizerKind::TypePlus)  && llvm::ClVtableStandard) {
+      if(llvm::CallBase* mallocCall = dyn_cast<llvm::CallBase>(Src)) {
+        AllocatorType isMallocCase = AllocatorType::NOT_ALLOCATOR;
+        int8_t custom_header_size = 0;
+        // VTable: Handle object when object allocate through malloc (which can not call constructor)
+        if (isa<CStyleCastExpr>(CE) || isa<CXXReinterpretCastExpr>(CE) || isa<CXXStaticCastExpr>(CE)) {
+          AllocatorTypeAndMetaDataSize res = CodeGenFunction::isAllocatorCast(CE);
+          isMallocCase = res.first;
+          custom_header_size = res.second;
+        }
+
+
+        clang::QualType testType = DestTy;
+        int double_ptr = 0;
+        while (1) {
+          double_ptr +=1;
+          auto test = testType->getPointeeType();
+          if (test.isNull() || !test->isAnyPointerType()) {
+            break;
+          }
+          testType = test;
+        }
+
+        const CXXRecordDecl *DerivedClassDecl = testType->getPointeeCXXRecordDecl();
+        if (isMallocCase != AllocatorType::NOT_ALLOCATOR && DerivedClassDecl && double_ptr < 2) {
+          llvm::Type* allocatedType = ConvertType(DerivedClassDecl->getTypeForDecl()->getCanonicalTypeInternal());
+          // VTable: Just return when target object type is not appropriate
+          if (!DerivedClassDecl->hasDefinition()){
+          
+            return Builder.CreateBitCast(Src, DstTy);
+          
+          } 
+          if((!DerivedClassDecl->isClass() && !DerivedClassDecl->isStruct())
+              || !DerivedClassDecl->isPolymorphic()
+              || !DerivedClassDecl->isForcePoly()) {
+
+            // TODO NICOLAS: look at inclusion issue test case. We do not handle
+            // recursive inclusion. If you malloc the grand-parent of an
+            // object we will not add the constructor call.
+            for (auto *F : llvm::make_range(DerivedClassDecl->field_begin(), DerivedClassDecl->field_end())) {
+              CXXRecordDecl* fieldDecl = F->getType()->getAsCXXRecordDecl();
+              if (fieldDecl && fieldDecl->isForcePoly()) {
+                for (CXXMethodDecl *MD : llvm::make_range(fieldDecl->method_begin(), fieldDecl->method_end())) {
+                  if (CXXConstructorDecl *target = dyn_cast<CXXConstructorDecl>(MD)) {
+                    if (target->isDefaultConstructor()) {
+                      if (debug) {
+                        llvm::errs() << "Inserting constructor call1 " << target->getNameAsString() << "\n";
+                      } 
+                      target->dropAttr<ExcludeFromExplicitInstantiationAttr>();
+                      target->markUsed(CGF.getContext());
+                  
+                      std::vector<Expr*> argsVec(0);
+                      for(uint i = 0; i < target->getNumParams(); i++) {
+                        argsVec.emplace_back(target->getParamDecl(i)->getDefaultArg());
+                      }
+                      ArrayRef<Expr *> Args = llvm::makeArrayRef(argsVec);
+                      CXXConstructExpr *cee = CXXConstructExpr::Create(CGF.getContext(), DestTy->getPointeeType(), E->getExprLoc(),
+                        target, false, Args,
+                        false, false, false, false,
+                        CXXConstructExpr::ConstructionKind::CK_Complete, E->getSourceRange());
+                    OffsetAndNbrObject pair = CGF.numberOfConstructorCall(mallocCall, allocatedType, isMallocCase, custom_header_size);
+                    Value* loopStartVal = pair.first;
+                    Value* nbrObj = pair.second;
+                    Value* addressWithNewType = Builder.CreateGEP( Builder.CreateBitCast(Src, DstTy), loopStartVal);
+                    Address addr = Address(addressWithNewType, CGF.getContext().getTypeAlignInChars(DestTy));
+                      CGF.EmitCXXAggrConstructorCall(target, nbrObj, addr, cee, false, false, true);
+                      break; // not necessary per say as default constructor should be unique
+                    }
+                  }
+                }
+              }
+            }
+            return Builder.CreateBitCast(Src, DstTy);
+          } else {
+            // VTable: Try to find constructor calls
+            for (CXXMethodDecl *MD : llvm::make_range(DerivedClassDecl->method_begin(), DerivedClassDecl->method_end())) {
+              if (CXXConstructorDecl *target = dyn_cast<CXXConstructorDecl>(MD)) {
+                if (target->isDefaultConstructor()) {
+                  if(llvm::CallBase* ci = dyn_cast<llvm::CallBase>(Src)) {
+                    if (debug) {
+                      llvm::errs() << "Inserting constructor call2 " << target->getNameAsString() << "\n";
+                    } 
+                    target->dropAttr<ExcludeFromExplicitInstantiationAttr>();
+                    target->markUsed(CGF.getContext());
+                    
+                    std::vector<Expr*> argsVec(0);
+                    for(uint i = 0; i < target->getNumParams(); i++) {
+                      argsVec.emplace_back(target->getParamDecl(i)->getDefaultArg());
+                    }
+                    ArrayRef<Expr *> Args = llvm::makeArrayRef(argsVec);
+                    CXXConstructExpr *cee = CXXConstructExpr::Create(CGF.getContext(), DestTy->getPointeeType(), E->getExprLoc(),
+                      target, false, Args,
+                      false, false, false, false,
+                      CXXConstructExpr::ConstructionKind::CK_Complete, E->getSourceRange());
+                    OffsetAndNbrObject pair = CGF.numberOfConstructorCall(mallocCall, allocatedType, isMallocCase, custom_header_size);
+                    Value* loopStartVal = pair.first;
+                    Value* nbrObj = pair.second;
+                    Value* addressWithNewType = Builder.CreateGEP( Builder.CreateBitCast(Src, DstTy), loopStartVal);
+                    Address addr = Address(addressWithNewType, CGF.getContext().getTypeAlignInChars(DestTy));
+                    CGF.EmitCXXAggrConstructorCall(target, nbrObj, addr, cee, false, false, true);
+                    break; // not necessary per say as default constructor should be unique
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Value* result = Builder.CreateBitCast(Src, DstTy);
+    // update save typecasting related object
+    QualType CastSrcTy = E->getType();
+    bool isNotVoidCast = (CastSrcTy->isAnyPointerType() && CastSrcTy->getPointeeType()->isStructureOrClassType()) && (DestTy->isAnyPointerType() && DestTy->getPointeeType()->isStructureOrClassType()); 
+    bool isDerivedCast = false;
+    // No class is void, we need to see if the class are in somewhat related.
+    if(isNotVoidCast) {
+      CXXRecordDecl* srcDecl, *destDecl;
+      if(CastSrcTy->isAnyPointerType()) {
+        srcDecl = CastSrcTy->getPointeeType()->getAsCXXRecordDecl();
+      } else { 
+        srcDecl = CastSrcTy->getAsCXXRecordDecl();
+      }
+      if(DestTy->isAnyPointerType()) {
+        destDecl = DestTy->getPointeeType()->getAsCXXRecordDecl();
+      } else { 
+        destDecl = DestTy->getAsCXXRecordDecl(); 
+      }
+      if(destDecl && srcDecl && destDecl->hasDefinition() && srcDecl->hasDefinition()) {
+        isDerivedCast = srcDecl->isDerivedFrom(destDecl) || destDecl->isDerivedFrom(srcDecl);
+      }
+    }
+    if (CGF.SanOpts.has(SanitizerKind::TypePlus) && llvm::ClCreateUnrelatedCastTypeList) {
+      if(llvm::ClCastObjOpt) {
+        llvm::errs() << "The option \"cast-obj-opt\" and \"create-cast-..._list\" cannot but used at the same time.\n";
+        exit(1);
+      }
+      auto testType = DestTy;
+      while (1 && !testType.isNull()) {
+        QualType test = testType->getPointeeType();
+        if (((QualType)test).isNull()) {
+          break;
+        } 
+        if(!test->isAnyPointerType())
+          break;
+        testType = test;
+      }
+      if(llvm::ClOldClassList) {
+                  llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+        if (const CXXRecordDecl *DerivedClassDecl = testType->getPointeeCXXRecordDecl()) {
+           if (DerivedClassDecl->hasDefinition()) {
+             for (const auto &Base : DerivedClassDecl->bases()) {
+               QualType FieldType = CGF.CGM.getContext().getBaseElementType(Base.getType());
+               if(!FieldType->getAsCXXRecordDecl()->isPolymorphic()) {
+                  HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(ConvertType(FieldType));
+               }
+             }
+          QualType SrcTy = E->getType();
+          if (!SrcTy->isVoidPointerType() && SrcTy->isAnyPointerType() &&
+               SrcTy->getPointeeType()->isStructureOrClassType() &&
+               SrcTy->getPointeeType()->getAsCXXRecordDecl()->isCompleteDefinition() &&
+               !SrcTy->getPointeeType()->getAsCXXRecordDecl()->isPolymorphic()) {
+            HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(
+                  ConvertType(SrcTy));
+           }        
+
+          }
+        }
+
+      } else {
+        if(!CastSrcTy->isVoidPointerType() && DestTy->isVoidPointerType() && CastSrcTy->isAnyPointerType() && CastSrcTy->getPointeeType()->isStructureOrClassType()) {
+          llvm::HexTypeCommonUtil::logClassToFile(ConvertType(CastSrcTy), "/cast_to_void");
+        } else if(CastSrcTy->isVoidPointerType() && !DestTy->isVoidPointerType() && DestTy->isAnyPointerType() && DestTy->getPointeeType()->isStructureOrClassType()) {
+          llvm::HexTypeCommonUtil::logClassToFile(ConvertType(DestTy), "/cast_from_void");
+        } 
+      
+        CGF.CGM.getTypes().updateCastingRelatedTypeIntoFile1(CastSrcTy, isDerivedCast);
+        CGF.CGM.getTypes().updateCastingRelatedTypeIntoFile2(CastSrcTy, isDerivedCast);
+        if (!isNotVoidCast) {
+          CGF.CGM.getTypes().updateCastingRelatedTypeIntoFile2(DestTy, isDerivedCast);
+        }
+      }
+    }
+
+    // Check should come after adding constructor as otherwise the vtable will not be init
+    if ((CGF.SanOpts.has(SanitizerKind::CFIUnrelatedCast) && !isDerivedCast) || (CGF.SanOpts.has(SanitizerKind::CFIDerivedCast) && isDerivedCast)  
+        || (CGF.SanOpts.has(SanitizerKind::TypePlus) && ((llvm::ClTypePlusCheckUnrelatedCasting && !isDerivedCast) || (llvm::ClTypePlusCheckDerivedCasting && isDerivedCast)))) {
+      if (auto PT = DestTy->getAs<PointerType>()) {
+        CGF.EmitVTablePtrCheckForCast(PT->getPointeeType(), Src,
+                                      /*MayBeNull=*/true,
+                                      isDerivedCast ? CodeGenFunction::CFITCK_DerivedCast : CodeGenFunction::CFITCK_UnrelatedCast,
+                                      CE->getBeginLoc());
+      }
+    }
+    return result;
   }
   case CK_AddressSpaceConversion: {
     Expr::EvalResult Result;
@@ -2141,17 +2603,42 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
                                    CE->path_begin(), CE->path_end(),
                                    CGF.ShouldNullCheckClassCastValue(CE));
 
+    if (CGF.SanOpts.has(SanitizerKind::TypePlus) && llvm::ClCreateDerivedCastTypeList) {
+      if(llvm::ClCastObjOpt) {
+        llvm::errs() << "The option \"cast-obj-opt\" and \"create-cast-..._list\" cannot but used at the same time.\n";
+        exit(1);
+      }
+      QualType SrcTy = E->getType();
+      if(llvm::ClOldClassList) {
+                  llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+        if (!SrcTy->isVoidPointerType() && SrcTy->isAnyPointerType() &&
+             SrcTy->getPointeeType()->isStructureOrClassType() &&
+             SrcTy->getPointeeType()->getAsCXXRecordDecl()->isCompleteDefinition() &&
+             !SrcTy->getPointeeType()->getAsCXXRecordDecl()->isPolymorphic()) {
+          HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(
+                ConvertType(SrcTy));
+          HexTypeCommonUtilSet.updateCastingRelatedTypeIntoFile(
+                ConvertType(DestTy));
+        }
+      } else {
+        CGF.CGM.getTypes().updateCastingRelatedTypeIntoFile2(SrcTy, true);
+      }
+    }
+
     // C++11 [expr.static.cast]p11: Behavior is undefined if a downcast is
     // performed and the object is not of the derived type.
     if (CGF.sanitizePerformTypeCheck())
       CGF.EmitTypeCheck(CodeGenFunction::TCK_DowncastPointer, CE->getExprLoc(),
                         Derived.getPointer(), DestTy->getPointeeType());
 
-    if (CGF.SanOpts.has(SanitizerKind::CFIDerivedCast))
+    if ((CGF.SanOpts.has(SanitizerKind::TypePlus) && llvm::ClTypePlusCheckDerivedCasting) 
+        || CGF.SanOpts.has(SanitizerKind::CFIDerivedCast)) {
       CGF.EmitVTablePtrCheckForCast(
           DestTy->getPointeeType(), Derived.getPointer(),
           /*MayBeNull=*/true, CodeGenFunction::CFITCK_DerivedCast,
           CE->getBeginLoc());
+    }
+
 
     return Derived.getPointer();
   }
@@ -2224,11 +2711,11 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
   case CK_ToUnion:
     llvm_unreachable("scalar cast to non-scalar value");
 
-  case CK_LValueToRValue:
+  case CK_LValueToRValue: {
     assert(CGF.getContext().hasSameUnqualifiedType(E->getType(), DestTy));
     assert(E->isGLValue() && "lvalue-to-rvalue applied to r-value!");
     return Visit(const_cast<Expr*>(E));
-
+  }
   case CK_IntegralToPointer: {
     Value *Src = Visit(const_cast<Expr*>(E));
 

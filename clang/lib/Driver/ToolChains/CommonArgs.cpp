@@ -841,6 +841,16 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
       StaticRuntimes.push_back("asan_cxx");
   }
 
+  if (SanArgs.needsTypePlusRt()) {
+    StaticRuntimes.push_back("typeplus");
+    // To use some ubsan functions
+
+    if (!SanArgs.needsOnlyTypePlusRt()) {
+      StaticRuntimes.push_back("ubsan_standalone");
+      StaticRuntimes.push_back("ubsan_standalone_cxx");
+    }
+  }
+
   if (!SanArgs.needsSharedRt() && SanArgs.needsMemProfRt() &&
       SanArgs.linkRuntimes()) {
     StaticRuntimes.push_back("memprof");

@@ -1,0 +1,3 @@
+out/OUT_FOLDER/*.bin usr/lib/chromium
+out/OUT_FOLDER/libEGL.so usr/lib/chromium
+out/OUT_FOLDER/libGLESv2.so usr/lib/chromium

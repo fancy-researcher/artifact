@@ -1,0 +1,8 @@
+HexType Linear insertion: 6368ms, 24.4923 micro s/ops
+HexType Linear lookup: 3082ms, 3.42444 micro s/ops
+HexType Linear cast success: 3258ms, 3.62 micro s/ops
+HexType Linear cast success complex: 3470ms, 3.85556 micro s/ops
+HexType Linear deletion: 1277ms, 4.91154 micro s/ops
+type++ repetitive complex: 782ms, 0.868889 micro s/ops
+type++ linear complex: 782ms, 0.868889 micro s/ops
+

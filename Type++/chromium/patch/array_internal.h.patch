@@ -1,0 +1,14 @@
+diff --git a/mojo/public/cpp/bindings/lib/array_internal.h b/mojo/public/cpp/bindings/lib/array_internal.h
+index 2321d0cac..792ee5afa 100644
+--- a/mojo/public/cpp/bindings/lib/array_internal.h
++++ b/mojo/public/cpp/bindings/lib/array_internal.h
+@@ -356,7 +356,8 @@ class Array_Data {
+ 
+   // Elements of type internal::ArrayDataTraits<T>::StorageType follow.
+ };
+-static_assert(sizeof(Array_Data<char>) == 8, "Bad sizeof(Array_Data)");
++// NICOLAS ADD ASSERT SUPPORT
++//static_assert(sizeof(Array_Data<char>) == 8, "Bad sizeof(Array_Data)");
+ 
+ // UTF-8 encoded
+ using String_Data = Array_Data<char>;

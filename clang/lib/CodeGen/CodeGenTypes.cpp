@@ -25,6 +25,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -797,6 +798,55 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
   TypeCache[Ty] = ResultType;
   return ResultType;
 }
+
+void CodeGenTypes::updateCastingRelatedTypeIntoFile1(QualType SrcTy, bool isDerived) {
+  llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+  CXXRecordDecl *SourceClassDecl;
+  if(!SrcTy->isAnyPointerType()) {
+    SourceClassDecl = SrcTy->getAsCXXRecordDecl();
+  } else {
+    SourceClassDecl = const_cast<CXXRecordDecl*>(SrcTy->getPointeeCXXRecordDecl());
+  }
+  if (SourceClassDecl) {
+    if(!SourceClassDecl->isCLike() && SourceClassDecl->hasDefinition()) {
+      for (const auto &Base : SourceClassDecl->bases()) {
+        QualType FieldType = getContext().getBaseElementType(Base.getType());
+        if(!FieldType->getAsCXXRecordDecl()->isPolymorphic()) {
+          // this call will do something now as we added the getunqual call to
+          // make sure we transmit a pointer and pass the first filtering step
+          // of the logging function.
+
+          // TODO NICOLAS URGENTLY CHECK WHY THIS CAST IS NEVER TRUE WITHOUT THE GETUNQUAL 
+          
+          if (isDerived) {
+            HexTypeCommonUtilSet.updateDerivedCastingRelatedTypeIntoFile(ConvertType(FieldType));
+          } else {
+            HexTypeCommonUtilSet.updateUnrelatedCastingTypeIntoFile(ConvertType(FieldType));
+          }
+        }
+      }
+    }
+  }
+}
+void CodeGenTypes::updateCastingRelatedTypeIntoFile2(QualType SrcTy, bool isDerived) {
+  llvm::HexTypeCommonUtil HexTypeCommonUtilSet;
+  if(SrcTy->isVoidPointerType()) {
+    return;
+  }
+  while(SrcTy->isAnyPointerType()) {
+    SrcTy = SrcTy->getPointeeType();
+  }
+  if (SrcTy->isStructureOrClassType() &&
+       SrcTy->getAsCXXRecordDecl()->isCompleteDefinition() &&
+      !SrcTy->getAsCXXRecordDecl()->isPolymorphic()) {
+    if (isDerived) {
+      HexTypeCommonUtilSet.updateDerivedCastingRelatedTypeIntoFile(ConvertType(SrcTy));
+    } else {
+      HexTypeCommonUtilSet.updateUnrelatedCastingTypeIntoFile(ConvertType(SrcTy));
+    }
+  }
+}
+
 
 bool CodeGenModule::isPaddedAtomicType(QualType type) {
   return isPaddedAtomicType(type->castAs<AtomicType>());
