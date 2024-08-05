@@ -127,6 +127,11 @@ ENV TYPEPP=
 FROM typepp AS test_typepp
 CMD zsh
 
+FROM typepp AS example_typepp
+COPY --chown=${USERNAME}:${USERNAME} Type++/example ${TYPESAFETY_VTABLE}/example
+WORKDIR ${TYPESAFETY_VTABLE}/example
+CMD zsh
+
 FROM typepp AS microbenchmark
 COPY --chown=${USERNAME}:${USERNAME} Type++/metadata-eval ${TYPESAFETY_VTABLE}/metadata-eval
 WORKDIR ${TYPESAFETY_VTABLE}/metadata-eval/hextype

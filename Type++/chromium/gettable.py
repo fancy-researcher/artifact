@@ -54,7 +54,7 @@ typepp = get_rollup_score(os.path.join(RESULT_FOLDER, "typepp_checking.json"))
 
 print(tabulate([["Baseline", baseline], ["CFI", cfi], ["type++", typepp]], headers=["", "Score"]))
 print()
-print(tabulate([["CFI", "Nan" if cfi == "Nan" else str(1-baseline/cfi*100)+"%"], ["type++", "Nan" if typepp == "Nan" else str((1-baseline/typepp)*100*-1)+"%"]], headers=["", "Score reduction"]))
+print(tabulate([["CFI", "Nan" if cfi == "Nan" else str(((baseline-cfi)/baseline)*100)+"%"], ["type++", "Nan" if typepp == "Nan" else str(((baseline-typepp)/baseline)*100)+"%"]], headers=["", "Score reduction"]))
 print()
 
 cfi_stats = get_coverage(os.path.join(RESULT_FOLDER, "chromium_total_result_cfi.txt"))

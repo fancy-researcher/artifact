@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, io, glob, statistics, pickle
+import os, io, glob, statistics, pickle, re
 from subprocess import Popen, PIPE
 from dotenv import load_dotenv
 TYPESAFETY_FOLDER = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir)
@@ -17,6 +17,8 @@ RESULTS_PATH = os.path.join(os.environ["RESULT_FOLDER"])
 COLUMN = 1 # RSS
 # COLUMN = 2 # PSS
 # COLUMN = 3 # Ref
+
+ISNUM = re.compile("[0-9. ].*")
 
 def get_mem_stats():
 
@@ -56,7 +58,8 @@ def get_mem_stats():
                 for l in f:
                     l = l.strip()
                     l_arr = l.split(";")
-
+                    if not ISNUM.fullmatch(l_arr[0]): # ensure line start with number (had some weird header lines a few times)
+                        continue
                     if unit_measurement is None:
                         unit_measurement = l_arr[COLUMN].strip()[4:-1]
                     else:
@@ -83,19 +86,19 @@ def get_mem_stats():
             agv_vtype = c["vtype"][0]
             max_vtype = c["vtype"][1]
 
-            agv_cfi = c["cfi"][0]
-            max_cfi = c["cfi"][1]
+            #agv_cfi = c["cfi"][0]
+            #max_cfi = c["cfi"][1]
 
             get_overhead = lambda new_val, ref_val: (new_val-ref_val)/ref_val*100
 
             avg_vtype_overhead = get_overhead(agv_vtype, agv_baseline)
             max_vtype_overhead = get_overhead(max_vtype, max_baseline)
 
-            avg_cfi_overhead = get_overhead(agv_cfi, agv_baseline)
-            max_cfi_overhead = get_overhead(max_cfi, max_baseline)
+            #avg_cfi_overhead = get_overhead(agv_cfi, agv_baseline)
+            #max_cfi_overhead = get_overhead(max_cfi, max_baseline)
 
-            avg_vtype_over_cfi_overhead = get_overhead(agv_vtype, agv_cfi)
-            max_vtype_over_cfi_overhead = get_overhead(max_vtype, max_cfi)
+            #avg_vtype_over_cfi_overhead = get_overhead(agv_vtype, agv_cfi)
+            #max_vtype_over_cfi_overhead = get_overhead(max_vtype, max_cfi)
 
             aggr_stats[p] = {}
             aggr_stats[p]["avg_vtype_overhead"] = avg_vtype_overhead

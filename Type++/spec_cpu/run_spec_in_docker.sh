@@ -43,6 +43,6 @@ if [[ -n "${ANALYSIS}" ]]; then
   python3 ../script/getloc.py
   python3 ../script/getanalysisresult.py
   cat "$RESULT_FOLDER"/analysis_result_test.tex
-else
-  tail -n +1 "$RESULT_FOLDER"/*/*
+#else
+#  tail -n +1 "$RESULT_FOLDER"/*/*
 fi

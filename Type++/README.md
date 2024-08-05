@@ -102,8 +102,8 @@ First, we need to define a location for the logs of type++. Additionaly,
 will be collected. 
 
 ```bash
-export TYPEPLUS_LOG_PATH="/tmp/" // Log folder
-export TARGET_TYPE_LIST_PATH=${TYPEPLUS_LOG_PATH}"/merged.txt" // This file will collect all classes that need to be instrumented.
+export TYPEPLUS_LOG_PATH="/tmp/" # Log folder
+export TARGET_TYPE_LIST_PATH=${TYPEPLUS_LOG_PATH}"/merged.txt" # This file will collect all classes that need to be instrumented.
 ```
 
 ### Running type++
@@ -169,7 +169,8 @@ instrument the classes that are in the pointed file. This allows also to use
 Property 3 with a limited set of classes manually selected. 
 
 ### Example
-Here is a minimal example highliting the detection of bad casting.  
+Here is a minimal example highliting the detection of type confusion caused by
+wrong derived casting.  
 
 #### Test code (`sample.cpp`) 
 
@@ -193,23 +194,37 @@ int main() {
 }
 ```
 
-#### Compile with original clang to ensure the porgram is C++ compliant regarding Default constructors
+#### Set enviroment variable 
+
+```bash
+export TYPEPLUS_LOG_PATH="/tmp/sample"
+export TARGET_TYPE_LIST_PATH=${TYPEPLUS_LOG_PATH}"/merged.txt"
+export LD_LIBRARY_PATH=${BUILD_FOLDER}/../libunwind-build/lib
+mkdir -p ${TYPEPLUS_LOG_PATH}
+```
+
+#### Compile with original Clang to ensure the porgram is C++ compliant with respects to default constructors rules
 
 ```bash
 ${BUILD_FOLDER}/bin/clang++ sample.cpp -Wall
 ```
 
-#### Set enviroment variable 
-
-```bash
-export TYPEPLUS_LOG_PATH="/tmp/"
-export TARGET_TYPE_LIST_PATH=${TYPEPLUS_LOG_PATH}"/merged.txt"
-```
-
 #### Create casting related object list 
 
 ```bash
-${BUILD_FOLDER}/bin/clang++ sample.cpp -stdlib=libc++ -nostdinc++ -Wl,-rpath,${LLVM_FOLDER}/build/lib -L${LLVM_FOLDER}/build/lib -I${LLVM_FOLDER}/build/include/c++/v1 -fsanitize=typeplus -flto -fvisibility=hidden -mllvm -create-derived-cast-type-list
+${BUILD_FOLDER}/bin/clang++ sample.cpp \
+    -stdlib=libc++ -nostdinc++ \
+    -Wl,-rpath,${BUILD_FOLDER}/../libcxx-build/lib \
+    -L${BUILD_FOLDER}/../libcxx-build/lib \
+    -I${BUILD_FOLDER}/../libcxx-build/include/c++/v1 \
+    -Wl,-rpath,${BUILD_FOLDER}/../libcxxabi-build/lib \
+    -L${BUILD_FOLDER}/../libcxxabi-build/lib \
+    -Wl,-rpath,${BUILD_FOLDER}/../libunwind-build/lib \
+    -L${BUILD_FOLDER}/../libunwind-build/lib \
+    -fsanitize=typeplus \
+    -flto \
+    -fvisibility=hidden \
+    -mllvm -create-derived-cast-type-list
 ```
 
 #### Merge class files 
@@ -219,18 +234,40 @@ multiple processes. In this case, we first need to merge all this files
 together. 
 
 ```bash
-${LLVM_FOLDER}/Type++/script/merge_typecasting_related_type.py ${TYPEPLUS_LOG_PATH} &> ${TARGET_TYPE_LIST_PATH}
+${LLVM_FOLDER}/Type++/script/merge_typecasting_related_type.py ${TYPEPLUS_LOG_PATH} > ${TARGET_TYPE_LIST_PATH}
 ```
 
 #### Compile
 
 ```bash
-${BUILD_FOLDER}/bin/clang++ sample.cpp -stdlib=libc++ -nostdinc++ -Wl,-rpath,${LLVM_FOLDER}/build/lib -L${LLVM_FOLDER}/build/lib -I${LLVM_FOLDER}/build/include/c++/v1 -fsanitize=typeplus -flto -fvisibility=hidden -mllvm -apply-vtable-standard -mllvm -cast-obj-opt -mllvm -check-base-to-drived-casting -mllvm -collect-profiling-data
+${BUILD_FOLDER}/bin/clang++ sample.cpp \
+    -stdlib=libc++ -nostdinc++ \
+    -Wl,-rpath,${BUILD_FOLDER}/../libcxx-build/lib \
+    -L${BUILD_FOLDER}/../libcxx-build/lib \
+    -I${BUILD_FOLDER}/../libcxx-build/include/c++/v1 \
+    -Wl,-rpath,${BUILD_FOLDER}/../libcxxabi-build/lib \
+    -L${BUILD_FOLDER}/../libcxxabi-build/lib \
+    -Wl,-rpath,${BUILD_FOLDER}/../libunwind-build/lib \
+    -L${BUILD_FOLDER}/../libunwind-build/lib \
+    -fsanitize=typeplus \
+    -flto \
+    -fvisibility=hidden \
+    -mllvm -apply-vtable-standard \
+    -mllvm -poly-classes \
+    -mllvm -cast-obj-opt \
+    -mllvm -check-base-to-derived-casting \
+    -mllvm -collect-profiling-data \
+    -mllvm -check-unrelated-casting
 ```
 
 #### Run the binary
 As we enabled ` -mllvm -collect-profiling-data`, the binary will print a summary in `TYPEPLUS_LOG_PATH` folder. 
 ```bash
-$ ./a.out
+rm -drf ${TYPEPLUS_LOG_PATH}/total_result.txt
+./a.out
+cat ${TYPEPLUS_LOG_PATH}/total_result.txt
 ```
-If you want more details on the type confusion (e.g., line number), you can enable either `PRINT_BAD_CASTING_FILE` or `PRINT_BAD_CASTING_STDOUT` in the [`typeplus.h`](LLVM/src/compiler-rt-files/typeplus.h) file.
+If you want more details on the type confusion (e.g., line number), you can
+enable either `PRINT_BAD_CASTING_FILE` or `PRINT_BAD_CASTING_STDOUT` in the
+[`typeplus.h`](LLVM/src/compiler-rt-files/typeplus.h) file before recompiling
+type++ via the `build.sh ` script.

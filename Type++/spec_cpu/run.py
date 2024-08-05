@@ -7,6 +7,7 @@ import subprocess, shutil
 from pathlib import Path
 from distutils.dir_util import copy_tree
 import logging
+import time
 
 logging.basicConfig(
     level=logging.WARN, format="%(asctime)s: %(levelname)s: %(message)s"
@@ -168,7 +169,7 @@ def copy_configs():
 def is_exe(fpath):
     return os.path.isfile(fpath) and os.access(fpath, os.X_OK) and "imagevalidate" not in fpath
 
-def process_result(benchmark, program, target):
+def process_result(benchmark, program, target, duration=0, libc_duration=0):
     """ Aggregate the results nicely in a single folder
 
     Args:
@@ -260,6 +261,14 @@ def process_result(benchmark, program, target):
         size_programs = os.path.join(RESULT_FOLDER, "size.txt")
         with open(size_programs, "a") as fout:
             fout.write(f"{benchmark}|{program}|{target}|{size}\n")
+        compilation_duration_programs = os.path.join(RESULT_FOLDER, "compilation_duration.txt")
+        with open(compilation_duration_programs, "a") as fout:
+            fout.write(f"{benchmark}|{program}|{target}|{duration}\n")
+        libc_compilation_duration_programs = os.path.join(RESULT_FOLDER, "libc_compilation_duration.txt")
+        if libc_duration > 0:
+            with open(libc_compilation_duration_programs, "a") as fout:
+                fout.write(f"{benchmark}|{program}|{target}|{libc_duration}\n")
+        
     else:
         has_error = True
 
@@ -658,6 +667,9 @@ for PROGRAM in programs:
   clean = get_clean_cmd(run_cmd, PROGRAM, SPEC_VARS)
   run_command(clean)
   my_logger.info("Target: %s", args.target)
+  duration = 0
+  libc_duration = 0
+  start = time.time()
   if args.target == "vtype":
     if PROGRAM in CUSTOM_HEADERS:
       # NOTE: I want CUSTOM_HEADER_SIZE in base 10 here
@@ -672,6 +684,7 @@ for PROGRAM in programs:
             build = get_build_cmd(run_cmd, PROGRAM,  SPEC_VARS)
             my_logger.info("Build command:\n%s", build)
             run_command(build)
+            duration += time.time() - start 
 
         build_dir, target_CXXOPTIMIZE = choose_target(args.target, "optimize")
         SPEC_VARS["CXXOPTIMIZE"] = CXXOPTIMIZE + target_CXXOPTIMIZE
@@ -688,8 +701,11 @@ for PROGRAM in programs:
         #shutil.copy("/tmp/merged.txt", "/tmp/cpu2006/471.omnetpp/merged.txt")
         env = os.environ
         env["TYPEPLUS_LOG_PATH"] =  TYPEPLUS_LOG_PATH
+        start = time.time()
         lib_build_out = subprocess.check_output([os.path.join(llvm_home, "cxx_build_for_program.sh")] + ["debug" if args.clang_debug else ""], env=env)
+        libc_duration = time.time() - start
         print(lib_build_out.decode("utf-8"))
+        start = time.time()
     except subprocess.CalledProcessError as ce:
         print(ce.output.decode("utf-8"), end="")
         my_logger.error("vtype_pre_build got an error, skipping %s.", PROGRAM)
@@ -703,6 +719,7 @@ for PROGRAM in programs:
   rebuild = get_rebuild_cmd(run_cmd, PROGRAM, SPEC_VARS)
   my_logger.info("Rebuild command:\n%s", rebuild)
   if not run_command(rebuild):
+    duration += time.time() - start 
     run = get_run_cmd(run_cmd, PROGRAM, SPEC_VARS)
 
     if args.memory_overhead:
@@ -710,6 +727,6 @@ for PROGRAM in programs:
 
     my_logger.info("Run command:\n%s", run)
     run_command(run)
-    process_result(args.benchmark, PROGRAM, args.target)
+    process_result(args.benchmark, PROGRAM, args.target, duration, libc_duration)
   else:
     my_logger.error("Build returned an error!")

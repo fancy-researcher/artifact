@@ -25,7 +25,9 @@ artifact evaluation scope.
 
 **Disclaimer:** since many steps run for a few hours, we recommend you
 operate in a **tumx** session to avoid loosing partial results or environment
-values.
+values. Additionally, type++ is still a research prototype with a liberal amount
+of logging still enabled. Errors or warnings messages can be printed as part of
+the build process (especially the warning analysis). 
 
 ### Installation
 
@@ -34,8 +36,9 @@ We require at least 16GB of RAM for SPEC CPU benchmarks and 128GB of RAM if you
 want to build and run Chromium. 
 A folder, `LLVM-typepp` will be created in your `$HOME` folder. 
 
-### Getting type++ code
+### Getting type++ code and inital requirements
 ```bash
+sudo apt install -qq -y python3-pip git curl tmux
 cd ${HOME}
 export REPO=https://github.com/fancy-researcher/artifact.git
 export BRANCH=typepp
@@ -48,7 +51,6 @@ cd ${HOME}/LLVM-typepp
 Install dependencies (Docker and a VNC server to run Chromium not in headless mode).
 ```bash
 cd ${HOME}/LLVM-typepp
-sudo apt install -qq -y python3-pip
 pip install -r requirements.txt
 
 # Chromium specific prerequisites: Install a vnc server
@@ -94,7 +96,9 @@ mv ${HOME}/cpu2017-1.1.8.iso .
 
 ### Building type++
 
-To build type++, you can simply run the two following lines. It should take around *three* hours to build.
+To build type++, you can simply run the two following lines. It should take
+around *three* hours to build on a i7-8700 CPU @ 3.20GHz with
+6 physical cores.
 ```bash
 export DOCKER_BUILDKIT=1
 cd ${HOME}/LLVM-typepp
@@ -118,7 +122,6 @@ docker build . --target cpu_typepp_stats -t cpu_typepp_stats
 
 # these builds collect memory allocation
 docker build . --target memory_reference -t memory_reference
-docker build . --target memory_cfi -t memory_cfi
 docker build . --target memory_typepp -t memory_typepp
 
 # these builds measure overhead w/ our patches and warning analyis
@@ -131,7 +134,11 @@ docker build . --target microbenchmark -t microbenchmark
 ```
 
 #### Docker images for the Chromium case study
-In addition to creating the images, this will fetch the Chromium source code and some of its dependencies.
+In addition to creating the images, this will fetch the Chromium source code and
+some of its dependencies.  This step will compile Chromium *five* times
+(baseline, type++_perf, cfi_coverage, type++_coverage, type++_warnings). This is
+likely to take multiple days (e.g., on a Xeon E5-2680 v4 @ 2.40GH with 56 cores
+and 256GB of RAM).
 
 ```bash
 # We download our patched Chromium version
@@ -191,7 +198,9 @@ cd ${HOME}/LLVM-typepp
 ### Running SPEC (Table I & II)
 We will first run all the different configurations to collect the data for the complete tables.
 
-The execution time of the next four sections may vary between few hours and a day.
+The execution time of the next four sections may vary between few hours and a
+day on a i7-8700 CPU @ 3.20GHz with 6 physical cores.
+
 #### Performance runs
 The number of repetition is controlled by the `NUMBER_OF_ITERATION` variable.
 ```bash
@@ -256,12 +265,6 @@ docker container cp  memory_reference_container:/home/nbadoux/results results_ba
 cp results_baseline_memory/total_result_memory_baseline_* ./results/
 
 # run the experiment
-docker run --env NUMBER_OF_ITERATION=${NUMBER_OF_REPLICATION} --name memory_cfi_container -t memory_cfi 
-# collect the results
-docker container cp  memory_cfi_container:/home/nbadoux/results results_cfi_memory
-cp results_cfi_memory/total_result_memory_cfi_* ./results/
-
-# run the experiment
 docker run --env NUMBER_OF_ITERATION=${NUMBER_OF_REPLICATION} --name memory_typepp_container -t memory_typepp 
 # collect the results
 docker container cp  memory_typepp_container:/home/nbadoux/results results_typepp_memory
@@ -306,9 +309,9 @@ docker run --name microbenchmark_container -t microbenchmark
 ```
 
 ### Table VI: Running Chromium
-This step will compile Chromium *six* times (baseline, cfi_perf, type++_perf,
-cfi_coverage, type++_coverage, type++_warnings). This is likely to take multiple
-days.
+This step will run the JetStream benchmark on the different instances of
+Chromium. The last line reports the results in a table. 
+As the run is non-deterministic, there might be some variance in the results. 
 
 ```bash
 cd ${HOME}/LLVM-typepp
@@ -340,6 +343,16 @@ Once inside the Docker container, you will find the Clang binary in `/home/nbado
 
 A guide to the different options of type++ can be found in the [Type++](./Type++/README.md#usage) folder.
 
+### Minimal example
+
+We provide a minimal example in the [`Type++/example`](./Type++/example) folder.
+To run it, simply execute the following commands that build and run the Docker container containing the example: 
+```bash
+docker build . --target example_typepp -t example_typepp
+docker run -it example_typepp zsh
+```
+
+Then follow the instructions in the [README](./Type++/example/README.md) file.
 
 ## Troubleshooting
 

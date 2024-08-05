@@ -128,7 +128,7 @@ void hextype_linear(uptr *insertedObjAddr, uint64_t *insertedObjType,
   END print_op_stat("HexType deletion", t1, t2, INSERTION_COUNT);
   long total_check = print_op_stat("HexType lookup", lookup_t1, lookup_t2, LOOKUP_COUNT);
   total_check += print_op_stat("HexType cast check", check_t1, check_t2, LOOKUP_COUNT);
-  print_op_stat("HexType verification", t1, t2, INSERTION_COUNT);
+  print_op_stat("HexType verification", total_check, LOOKUP_COUNT);
   delete[] found;
 };
 
