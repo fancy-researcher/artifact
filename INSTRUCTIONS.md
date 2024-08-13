@@ -377,3 +377,13 @@ still running, first kill the container via `docker kill $CONTAINER_NAME`.
 We encountered a few times that the download of the Chromium dependencies
 failed. This can be due to a network issue. In this case, we advise on
 relaunching the build script. 
+
+### Permission issue inside the Docker container
+
+The whole artifact folder is mounted inside the Docker containers. Any
+modification to the permissions of the folder will be reflected inside the
+container. In particular, if the owner of the folder is changed, the ID inside
+the container will not match the owner of the files resulting in permission
+issues.  If you encounter this problem, you should reset the permissions inside
+the container with the `chown -R $USER:$USER` command. To access inside the
+container, you can use the `docker exec -it $CONTAINER_ID zsh` command.

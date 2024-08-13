@@ -28,12 +28,12 @@ cd $CPU2006_FOLDER/benchspec/CPU2006/450.soplex/src/
 patch -f -p1 < 450.soplex.patch
 cd -
 
-## 453.povray
-#echo "[+] 453.povray"
-#cp 453.povray.patch $CPU2006_FOLDER/benchspec/CPU2006/453.povray/src/
-#cd $CPU2006_FOLDER/benchspec/CPU2006/453.povray/src/
-#patch -f -p1 < 453.povray.patch
-#cd -
+# 453.povray
+echo "[+] 453.povray"
+cp 453.povray.patch $CPU2006_FOLDER/benchspec/CPU2006/453.povray/src/
+cd $CPU2006_FOLDER/benchspec/CPU2006/453.povray/src/
+patch -f -p1 < 453.povray.patch
+cd -
 #cp 453.povray_MANIFEST.patch $CPU2006_FOLDER
 #cd $CPU2006_FOLDER
 #patch -f -p1 MANIFEST < 453.povray_MANIFEST.patch
@@ -46,12 +46,12 @@ cd $CPU2006_FOLDER/benchspec/CPU2006/483.xalancbmk/src/
 patch -f -p1 < 483.xalancbmk.patch
 cd -
 
-## 511.povray
-#echo "[+] 511.povray_r"
-#cp 511.povray_r.patch $CPU2017_FOLDER/benchspec/CPU/511.povray_r/src/
-#cd $CPU2017_FOLDER/benchspec/CPU/511.povray_r/src/
-#patch -f -p1 <  511.povray_r.patch
-#cd -
+# 511.povray
+echo "[+] 511.povray_r"
+cp 511.povray_r.patch $CPU2017_FOLDER/benchspec/CPU/511.povray_r/src/
+cd $CPU2017_FOLDER/benchspec/CPU/511.povray_r/src/
+patch -f -p1 <  511.povray_r.patch
+cd -
 
 # # 523.xalancbmk_r
 echo "[+] 523.xalancbmk_r"
