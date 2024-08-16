@@ -163,6 +163,7 @@ git clone $CHROMIUM_REPO --single-branch --branch $CHROMIUM_BRANCH_TYPEPP ${CHRO
 
 # we build five versions of Chromium: baseline, cfi, typepp, cfi+statistics, and typepp+statistics
 # /!\ THIS WILL TAKE AROUND 400GB OF DISK SPACE AND MORE THAN A DAY TO BUILD
+chmod 777 -R ${HOME}/LLVM-typepp/Type++/chromium/eval
 ${HOME}/LLVM-typepp/Type++/chromium/build_baseline.sh
 ${HOME}/LLVM-typepp/Type++/chromium/build_cfi.sh
 ${HOME}/LLVM-typepp/Type++/chromium/build_typepp.sh
@@ -315,6 +316,7 @@ As the run is non-deterministic, there might be some variance in the results.
 
 ```bash
 cd ${HOME}/LLVM-typepp
+chmod 777 -R ${HOME}/LLVM-typepp/Type++/chromium/eval
 mkdir -p results
 
 ${HOME}/LLVM-typepp/Type++/chromium/run_baseline.sh

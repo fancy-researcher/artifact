@@ -28,6 +28,7 @@ export DISPLAY=:1
 VERSION=${1}
 echo $VERSION
 sudo chown -R ${USER}:${USER} ${TYPESAFETY_CHROMIUM_EVAL_FOLDER}
+sudo chmod -R 777 ${TYPESAFETY_CHROMIUM_EVAL_FOLDER}
 timeout --foreground 30m python3 ${TYPESAFETY_CHROMIUM_EVAL_FOLDER}/jetstream.py    \
       -b chrome                                        \
       --chrome-path ${CHROMIUM_FOLDER}/out/${VERSION}/chrome \
