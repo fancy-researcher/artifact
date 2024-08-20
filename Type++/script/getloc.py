@@ -3,6 +3,7 @@
 import os, io, glob
 from subprocess import Popen, PIPE
 from dotenv import load_dotenv
+from multiprocessing import Pool
 
 ENVIRONMENT_FOLDER = os.environ.get("ENVIRONMENT_FOLDER")
 env_patch_str = "environment_patched.sh"
@@ -84,44 +85,43 @@ def dumpLocs(cloc_output, loc, files):
         f.write(f"files|{files}\n")
 
 
-def findLocSpecCPU2006():
+def findLocSpecCPU2006(prg):
     global SPECCPU2006_PROGRAMS
     global SPECCPU2006_PATH
     global CLOC2006_OUTPUT_PATH
 
-    for prg in SPECCPU2006_PROGRAMS:
-        program_path = os.path.join(SPECCPU2006_PATH, prg)
-        cloc_output = os.path.join(RESULT_PATH, prg, "loc_stats.txt")
+    program_path = os.path.join(SPECCPU2006_PATH, prg)
+    cloc_output = os.path.join(RESULT_PATH, prg, "loc_stats.txt")
 
-        print(f"doing: {program_path}")
+    print(f"doing: {program_path}")
 
-        loc, files = getCloc(program_path.replace("named", "namd"))
-        dumpLocs(cloc_output, loc, files)
+    loc, files = getCloc(program_path.replace("named", "namd"))
+    dumpLocs(cloc_output, loc, files)
 
-        with open(cloc_output, "w") as f:
-            f.write(f"LoC|{loc}\n")
-            f.write(f"files|{files}\n")
+    with open(cloc_output, "w") as f:
+        f.write(f"LoC|{loc}\n")
+        f.write(f"files|{files}\n")
 
 
-def findLocSpecCPU2017():
+def findLocSpecCPU2017(prg):
     global SPECCPU2017_PROGRAMS
     global SPECCPU2017_PATH
     global CLOC2017_OUTPUT_PATH
 
-    for prg in SPECCPU2017_PROGRAMS:
-        program_path = os.path.join(SPECCPU2017_PATH, prg)
-        cloc_output = os.path.join(RESULT_PATH, prg, "loc_stats.txt")
+    program_path = os.path.join(SPECCPU2017_PATH, prg)
+    cloc_output = os.path.join(RESULT_PATH, prg, "loc_stats.txt")
 
-        print(f"doing: {program_path}")
+    print(f"doing: {program_path}")
 
-        loc, files = getCloc(program_path)
-        dumpLocs(cloc_output, loc, files)
+    loc, files = getCloc(program_path)
+    dumpLocs(cloc_output, loc, files)
 
-        with open(cloc_output, "w") as f:
-            f.write(f"LoC|{loc}\n")
-            f.write(f"files|{files}\n")
+    with open(cloc_output, "w") as f:
+        f.write(f"LoC|{loc}\n")
+        f.write(f"files|{files}\n")
 
 
 if __name__ == "__main__":
-    findLocSpecCPU2006()
-    findLocSpecCPU2017()
+    pool = Pool()
+    pool.map(findLocSpecCPU2006, SPECCPU2006_PROGRAMS)
+    pool.map(findLocSpecCPU2017, SPECCPU2017_PROGRAMS)

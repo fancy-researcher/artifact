@@ -182,22 +182,31 @@ def findLocSpecCPU(programs, benchmark):
         rec.name_program = prg
 
         # get loc stats
-        loc, files = getLocFiles(prg)
-        rec.tot_loc = loc
+        try:
+            loc, files = getLocFiles(prg)
+            rec.tot_loc = loc
+        except:
+            print(f"Loc file not found for {prg} {benchmark}")
 
         # get warning p1 stat
-        tot_charcast_p1, tot_phantomcast_p1, tot_sizeof_p1, tot_uninit_p1 = getWarningStats(prg, benchmark, "p1")
-        rec.tot_charcast_p1 = tot_charcast_p1
-        rec.tot_phantomcast_p1 = tot_phantomcast_p1
-        rec.tot_sizeof_p1 = tot_sizeof_p1
-        rec.tot_uninit_p1 = tot_uninit_p1
+        try:
+            tot_charcast_p1, tot_phantomcast_p1, tot_sizeof_p1, tot_uninit_p1 = getWarningStats(prg, benchmark, "p1")
+            rec.tot_charcast_p1 = tot_charcast_p1
+            rec.tot_phantomcast_p1 = tot_phantomcast_p1
+            rec.tot_sizeof_p1 = tot_sizeof_p1
+            rec.tot_uninit_p1 = tot_uninit_p1
+        except FileNotFoundError:
+            print(f"Warning file not found for {prg} {benchmark} p1")
 
         # get warning p2 stat
-        tot_charcast_p2, tot_phantomcast_p2, tot_sizeof_p2, tot_uninit_p2 = getWarningStats(prg, benchmark, "p2")
-        rec.tot_charcast_p2 = tot_charcast_p2
-        rec.tot_phantomcast_p2 = tot_phantomcast_p2
-        rec.tot_sizeof_p2 = tot_sizeof_p2
-        rec.tot_uninit_p2 = tot_uninit_p2
+        try:
+            tot_charcast_p2, tot_phantomcast_p2, tot_sizeof_p2, tot_uninit_p2 = getWarningStats(prg, benchmark, "p2")
+            rec.tot_charcast_p2 = tot_charcast_p2
+            rec.tot_phantomcast_p2 = tot_phantomcast_p2
+            rec.tot_sizeof_p2 = tot_sizeof_p2
+            rec.tot_uninit_p2 = tot_uninit_p2
+        except FileNotFoundError:
+            print(f"Warning file not found for {prg} {benchmark} p1")
 
         emitRecord(rec)
         updateSum(rec)
