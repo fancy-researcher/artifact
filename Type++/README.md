@@ -1,9 +1,12 @@
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/llvm/llvm-project/blob/release/19.x/LICENSE.TXT)
 # type++
 
 type++ can be run locally, in a Docker container, or with the help of [Visual
 Studio Code dev
 container](https://code.visualstudio.com/docs/devcontainers/containers)
 features.
+
+The LLVM code is released under the Apache License v2.0 with LLVM Exceptions. The type++ code follows the same license. 
 
 ## Environment
 

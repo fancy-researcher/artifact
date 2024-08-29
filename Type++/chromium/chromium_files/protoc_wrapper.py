@@ -204,8 +204,6 @@ def main(argv):
 
   if options.include:
     WriteIncludes(headers, options.include)
-  #if options.cc_out_dir:
-  #  os.system("/home/nbadoux/LLVM-typepp/Type++/chromium/scripts/cache_miss.py " + options.cc_out_dir)
 
 if __name__ == "__main__":
   try:

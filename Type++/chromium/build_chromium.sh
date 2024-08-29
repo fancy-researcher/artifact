@@ -119,10 +119,11 @@ ${TYPESAFETY_FOLDER}/chromium/get_deps.sh
 cd -
 
 if [[ $# -eq 0 || ( $1 == typepp* && $1 != typepp_collect ) ]] ; then
-    cd /home/nbadoux
-    rm -drf chromium/v8 chromium/third_party
-    cp -r thirdparty chromium/third_party
-    cp -r v8 chromium/v8 
+    cd /home/nbadoux/chromium/third_party
+    patch -f -p1 < ${TYPESAFETY_FOLDER}/chromium/patch/third_party.patch
+    cd -
+    cd /home/nbadoux/chromium/v8 
+    patch -f -p1 < ${TYPESAFETY_FOLDER}/chromium/patch/v8.patch
     cd -
 fi
 

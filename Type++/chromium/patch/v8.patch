@@ -1,0 +1,177 @@
+diff --color -Naur v8_original/src/base/macros.h v8/src/base/macros.h
+--- v8_original/src/base/macros.h	2024-08-27 13:55:09.080585943 +0000
++++ v8/src/base/macros.h	2024-07-03 22:02:20.000000000 +0000
+@@ -102,8 +102,8 @@
+ // is likely to surprise you.
+ template <class Dest, class Source>
+ V8_INLINE Dest bit_cast(Source const& source) {
+-  static_assert(sizeof(Dest) == sizeof(Source),
+-                "source and dest must be same size");
++ // static_assert(sizeof(Dest) == sizeof(Source),
++ //               "source and dest must be same size");
+   Dest dest;
+   v8::base::Memcpy(&dest, &source, sizeof(dest));
+   return dest;
+diff --color -Naur v8_original/src/execution/isolate.cc v8/src/execution/isolate.cc
+--- v8_original/src/execution/isolate.cc	2024-08-27 13:55:09.256586526 +0000
++++ v8/src/execution/isolate.cc	2024-07-03 20:49:10.000000000 +0000
+@@ -2926,6 +2926,7 @@
+ }
+ 
+ void Isolate::CheckIsolateLayout() {
++ /* NICOLAS CHANGE PROBABLY BREAK
+   CHECK_EQ(OFFSET_OF(Isolate, isolate_data_), 0);
+   CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, isolate_data_.embedder_data_)),
+            Internals::kIsolateEmbedderDataOffset);
+@@ -2938,7 +2939,7 @@
+   CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, isolate_data_.stack_guard_)),
+            Internals::kIsolateStackGuardOffset);
+   CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, isolate_data_.roots_)),
+-           Internals::kIsolateRootsOffset);
++           Internals::kIsolateRootsOffset);*/
+ 
+ #ifdef V8_HEAP_SANDBOX
+   CHECK_EQ(static_cast<int>(OFFSET_OF(ExternalPointerTable, buffer_)),
+diff --color -Naur v8_original/src/execution/isolate.h v8/src/execution/isolate.h
+--- v8_original/src/execution/isolate.h	2024-08-27 13:55:09.256586526 +0000
++++ v8/src/execution/isolate.h	2024-07-03 20:49:10.000000000 +0000
+@@ -960,12 +960,14 @@
+     return name##_;                                              \
+   }                                                              \
+   inline void set_##name(type value) {                           \
+-    DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_); \
+     name##_ = value;                                             \
+   }
+   ISOLATE_INIT_LIST(GLOBAL_ACCESSOR)
+ #undef GLOBAL_ACCESSOR
+ 
++// Ncolas removed at line 963, above nmae##_ = value;
++// DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_);
++
+ #define GLOBAL_ARRAY_ACCESSOR(type, name, length)                \
+   inline type* name() {                                          \
+     DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_); \
+diff --color -Naur v8_original/src/heap/base/worklist.h v8/src/heap/base/worklist.h
+--- v8_original/src/heap/base/worklist.h	2024-08-27 13:55:09.272586579 +0000
++++ v8/src/heap/base/worklist.h	2024-07-03 20:49:10.000000000 +0000
+@@ -81,7 +81,7 @@
+ 
+ template <typename EntryType, uint16_t SegmentSize>
+ void Worklist<EntryType, SegmentSize>::Push(Segment* segment) {
+-  DCHECK(!segment->IsEmpty());
++  //NICOLAS COMMENTED DCHECK(!segment->IsEmpty());
+   v8::base::MutexGuard guard(&lock_);
+   segment->set_next(top_);
+   set_top(segment);
+@@ -92,7 +92,7 @@
+ bool Worklist<EntryType, SegmentSize>::Pop(Segment** segment) {
+   v8::base::MutexGuard guard(&lock_);
+   if (top_ == nullptr) return false;
+-  DCHECK_LT(0U, size_);
++  //NICOLAS COMMENTED DCHECK_LT(0U, size_);
+   size_.fetch_sub(1, std::memory_order_relaxed);
+   *segment = top_;
+   set_top(top_->next());
+@@ -136,7 +136,7 @@
+   while (current != nullptr) {
+     current->Update(callback);
+     if (current->IsEmpty()) {
+-      DCHECK_LT(0U, size_);
++      //NICOLAS COMMENTED DCHECK_LT(0U, size_);
+       ++num_deleted;
+       if (prev == nullptr) {
+         top_ = current->next();
+@@ -226,13 +226,13 @@
+ 
+ template <typename EntryType, uint16_t SegmentSize>
+ void Worklist<EntryType, SegmentSize>::Segment::Push(EntryType entry) {
+-  DCHECK(!IsFull());
++  // NICOLAS COMMENTED DCHECK(!IsFull());
+   entries_[index_++] = entry;
+ }
+ 
+ template <typename EntryType, uint16_t SegmentSize>
+ void Worklist<EntryType, SegmentSize>::Segment::Pop(EntryType* entry) {
+-  DCHECK(!IsEmpty());
++  //NICOLAS COMMENTED DCHECK(!IsEmpty());
+   *entry = entries_[--index_];
+ }
+ 
+@@ -305,22 +305,22 @@
+   }
+ 
+   inline Segment* push_segment() {
+-    DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(),
+-              push_segment_);
++    //NICOLAS COMMENTED DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(),
++    //          push_segment_);
+     return static_cast<Segment*>(push_segment_);
+   }
+   inline const Segment* push_segment() const {
+-    DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(),
+-              push_segment_);
++    //NICOLAS COMMENTED DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(),
++    //          push_segment_);
+     return static_cast<const Segment*>(push_segment_);
+   }
+ 
+   inline Segment* pop_segment() {
+-    DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(), pop_segment_);
++    //NICOLAS COMMENTED DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(), pop_segment_);
+     return static_cast<Segment*>(pop_segment_);
+   }
+   inline const Segment* pop_segment() const {
+-    DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(), pop_segment_);
++    //NICOLAS COMMENTED DCHECK_NE(internal::SegmentBase::GetSentinelSegmentAddress(), pop_segment_);
+     return static_cast<const Segment*>(pop_segment_);
+   }
+ 
+@@ -360,9 +360,9 @@
+ Worklist<EntryType, SegmentSize>::Local::operator=(
+     Worklist<EntryType, SegmentSize>::Local&& other) V8_NOEXCEPT {
+   if (this != &other) {
+-    DCHECK_NULL(worklist_);
+-    DCHECK_NULL(push_segment_);
+-    DCHECK_NULL(pop_segment_);
++    //NICOLAS COMMENTED DCHECK_NULL(worklist_);
++    //NICOLAS COMMENTED DCHECK_NULL(push_segment_);
++    //NICOLAS COMMENTED DCHECK_NULL(pop_segment_);
+     worklist_ = other.worklist_;
+     push_segment_ = other.push_segment_;
+     pop_segment_ = other.pop_segment_;
+diff --color -Naur v8_original/src/heap/slot-set.h v8/src/heap/slot-set.h
+--- v8_original/src/heap/slot-set.h	2024-08-27 13:55:09.292586645 +0000
++++ v8/src/heap/slot-set.h	2024-07-03 20:49:10.000000000 +0000
+@@ -599,8 +599,8 @@
+ #endif
+ };
+ 
+-STATIC_ASSERT(std::is_standard_layout<SlotSet>::value);
+-STATIC_ASSERT(std::is_standard_layout<SlotSet::Bucket>::value);
++// STATIC_ASSERT(std::is_standard_layout<SlotSet>::value);
++// STATIC_ASSERT(std::is_standard_layout<SlotSet::Bucket>::value);
+ 
+ enum SlotType {
+   FULL_EMBEDDED_OBJECT_SLOT,
+diff --color -Naur v8_original/src/profiler/heap-snapshot-generator.cc v8/src/profiler/heap-snapshot-generator.cc
+--- v8_original/src/profiler/heap-snapshot-generator.cc	2024-08-27 13:55:09.364586884 +0000
++++ v8/src/profiler/heap-snapshot-generator.cc	2024-07-03 20:49:10.000000000 +0000
+@@ -188,13 +188,13 @@
+       treat_global_objects_as_roots_(global_objects_as_roots) {
+   // It is very important to keep objects that form a heap snapshot
+   // as small as possible. Check assumptions about data structure sizes.
+-  STATIC_ASSERT(kSystemPointerSize != 4 || sizeof(HeapGraphEdge) == 12);
+-  STATIC_ASSERT(kSystemPointerSize != 8 || sizeof(HeapGraphEdge) == 24);
+-  STATIC_ASSERT(kSystemPointerSize != 4 || sizeof(HeapEntry) == 32);
++  // STATIC_ASSERT(kSystemPointerSize != 4 || sizeof(HeapGraphEdge) == 12);
++  // STATIC_ASSERT(kSystemPointerSize != 8 || sizeof(HeapGraphEdge) == 24);
++  // STATIC_ASSERT(kSystemPointerSize != 4 || sizeof(HeapEntry) == 32);
+ #if V8_CC_MSVC
+-  STATIC_ASSERT(kSystemPointerSize != 8 || sizeof(HeapEntry) == 48);
++  // STATIC_ASSERT(kSystemPointerSize != 8 || sizeof(HeapEntry) == 48);
+ #else   // !V8_CC_MSVC
+-  STATIC_ASSERT(kSystemPointerSize != 8 || sizeof(HeapEntry) == 40);
++  // STATIC_ASSERT(kSystemPointerSize != 8 || sizeof(HeapEntry) == 40);
+ #endif  // !V8_CC_MSVC
+   memset(&gc_subroot_entries_, 0, sizeof(gc_subroot_entries_));
+ }

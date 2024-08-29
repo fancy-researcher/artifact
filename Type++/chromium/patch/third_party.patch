@@ -1,0 +1,420 @@
+diff --color -aurBwbZE chromium/third_party/eigen3/src/Eigen/src/Core/util/Memory.h thirdparty/eigen3/src/Eigen/src/Core/util/Memory.h
+--- chromium/third_party/eigen3/src/Eigen/src/Core/util/Memory.h	2024-08-27 14:53:42.309597769 +0000
++++ thirdparty/eigen3/src/Eigen/src/Core/util/Memory.h	2023-07-28 11:24:06.000000000 +0000
+@@ -13,6 +13,9 @@
+ // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ 
++#include <type_traits>
++
++
+ /*****************************************************************************
+ *** Platform checks for aligned malloc functions                           ***
+ *****************************************************************************/
+@@ -443,7 +446,7 @@
+ {
+   if(NumTraits<T>::RequireInitialization)
+     destruct_elements_of_array<T>(ptr, size);
+-  conditional_aligned_free<Align>(ptr);
++  conditional_aligned_free<Align>(const_cast< typename std::remove_const<T>::type *> (ptr));
+ }
+ 
+ /****************************************************************************/
+diff --color -aurBwbZE chromium/third_party/harfbuzz-ng/src/src/hb-machinery.hh thirdparty/harfbuzz-ng/src/src/hb-machinery.hh
+--- chromium/third_party/harfbuzz-ng/src/src/hb-machinery.hh	2024-08-27 14:53:46.065610847 +0000
++++ thirdparty/harfbuzz-ng/src/src/hb-machinery.hh	2023-07-28 11:24:23.000000000 +0000
+@@ -119,7 +119,7 @@
+ 
+ #define DEFINE_SIZE_ARRAY(size, array) \
+   DEFINE_COMPILES_ASSERTION ((void) (array)[0].static_size) \
+-  DEFINE_INSTANCE_ASSERTION (sizeof (*this) == (size) + (HB_VAR_ARRAY+0) * sizeof ((array)[0])) \
++  /*DEFINE_INSTANCE_ASSERTION (sizeof (*this) == (size) + (HB_VAR_ARRAY+0) * sizeof ((array)[0]))*/ \
+   static constexpr unsigned null_size = (size); \
+   static constexpr unsigned min_size = (size)
+ 
+diff --color -aurBwbZE chromium/third_party/harfbuzz-ng/src/src/hb-subset-cff1.cc thirdparty/harfbuzz-ng/src/src/hb-subset-cff1.cc
+--- chromium/third_party/harfbuzz-ng/src/src/hb-subset-cff1.cc	2024-08-27 14:53:46.093610944 +0000
++++ thirdparty/harfbuzz-ng/src/src/hb-subset-cff1.cc	2023-07-28 11:23:33.000000000 +0000
+@@ -402,7 +402,8 @@
+   void plan_subset_encoding (const OT::cff1::accelerator_subset_t &acc, hb_subset_plan_t *plan)
+   {
+     const Encoding *encoding = acc.encoding;
+-    unsigned int  size0, size1, supp_size;
++    unsigned int  size0, size1;
++    // unsigned int supp_size;
+     hb_codepoint_t  code, last_code = CFF_UNDEF_CODE;
+     hb_vector_t<hb_codepoint_t> supp_codes;
+ 
+@@ -412,7 +413,7 @@
+       return;
+     }
+ 
+-    supp_size = 0;
++    // supp_size = 0;
+     supp_codes.init ();
+ 
+     subset_enc_num_codes = plan->num_output_glyphs () - 1;
+@@ -448,7 +449,7 @@
+ 	  code_pair_t pair = { supp_codes[i], sid };
+ 	  subset_enc_supp_codes.push (pair);
+ 	}
+-	supp_size += SuppEncoding::static_size * supp_codes.length;
++	// supp_size += SuppEncoding::static_size * supp_codes.length;
+       }
+     }
+     supp_codes.fini ();
+diff --color -aurBwbZE chromium/third_party/libjpeg_turbo/BUILD.gn thirdparty/libjpeg_turbo/BUILD.gn
+--- chromium/third_party/libjpeg_turbo/BUILD.gn	2024-08-27 14:53:40.877592784 +0000
++++ thirdparty/libjpeg_turbo/BUILD.gn	2023-06-27 13:40:14.000000000 +0000
+@@ -81,6 +81,7 @@
+       defines += [
+         "__x86__",
+         "PIC",
++        "IS_TYPEXX"
+       ]
+     } else if (current_cpu == "x64") {
+       include_dirs += [ "simd/x86_64/" ]
+@@ -116,6 +117,7 @@
+       defines += [
+         "__x86_64__",
+         "PIC",
++        "IS_TYPEXX"
+       ]
+     }
+ 
+@@ -182,7 +184,8 @@
+     }
+ 
+     defines = [
+-      "NEON_INTRINSICS"
++      "NEON_INTRINSICS",
++        "IS_TYPEXX"
+     ]
+ 
+     configs -= [ "//build/config/compiler:default_optimization" ]
+@@ -258,6 +261,7 @@
+   defines = [
+     "WITH_SIMD",
+     "NO_GETENV",
++    "IS_TYPEXX"
+   ]
+ 
+   configs += [ ":libjpeg_config" ]
+@@ -275,7 +279,8 @@
+     public_deps += [ ":simd" ]
+ 
+     if ((current_cpu == "arm" || current_cpu == "arm64") && arm_use_neon) {
+-      defines += [ "NEON_INTRINSICS", ]
++      defines += [ "NEON_INTRINSICS", 
++        "IS_TYPEXX"]
+     }
+   }
+ }
+@@ -349,6 +354,7 @@
+       "WITH_SIMD",
+       "BMP_SUPPORTED",
+       "PPM_SUPPORTED",
++        "IS_TYPEXX"
+     ]
+ 
+     include_dirs = [
+diff --color -aurBwbZE chromium/third_party/libjpeg_turbo/jpeglib.h thirdparty/libjpeg_turbo/jpeglib.h
+--- chromium/third_party/libjpeg_turbo/jpeglib.h	2024-08-27 14:53:40.893592839 +0000
++++ thirdparty/libjpeg_turbo/jpeglib.h	2023-07-28 11:24:06.000000000 +0000
+@@ -271,14 +271,24 @@
+ 
+ /* Common fields between JPEG compression and decompression master structs. */
+ 
++#if defined(IS_TYPEXX)  && ! defined(__cplusplus)
+ #define jpeg_common_fields \
++  void* _vptr_jpeg_decompress_struct; /* TYPEPP: Vptr for instrumented struct */ \
+   struct jpeg_error_mgr *err;   /* Error handler module */ \
+   struct jpeg_memory_mgr *mem;  /* Memory manager module */ \
+   struct jpeg_progress_mgr *progress; /* Progress monitor, or NULL if none */ \
+   void *client_data;            /* Available for use by application */ \
+   boolean is_decompressor;      /* So common code can tell which is which */ \
+   int global_state              /* For checking call sequence validity */
+-
++#else
++#define jpeg_common_fields \
++  struct jpeg_error_mgr *err;   /* Error handler module */ \
++  struct jpeg_memory_mgr *mem;  /* Memory manager module */ \
++  struct jpeg_progress_mgr *progress; /* Progress monitor, or NULL if none */ \
++  void *client_data;            /* Available for use by application */ \
++  boolean is_decompressor;      /* So common code can tell which is which */ \
++  int global_state              /* For checking call sequence validity */
++#endif
+ /* Routines that are to be used by both halves of the library are declared
+  * to receive a pointer to this structure.  There are no actual instances of
+  * jpeg_common_struct, only of jpeg_compress_struct and jpeg_decompress_struct.
+diff --color -aurBwbZE chromium/third_party/pdfium/core/fxcodec/png/png_decoder.cpp thirdparty/pdfium/core/fxcodec/png/png_decoder.cpp
+--- chromium/third_party/pdfium/core/fxcodec/png/png_decoder.cpp	2024-08-27 14:53:54.025638566 +0000
++++ thirdparty/pdfium/core/fxcodec/png/png_decoder.cpp	2023-07-28 11:23:58.000000000 +0000
+@@ -10,6 +10,7 @@
+ 
+ #include "core/fxcodec/cfx_codec_memory.h"
+ #include "core/fxcodec/fx_codec.h"
++#include "core/fxcodec/fx_codec_def.h"
+ #include "core/fxcrt/unowned_ptr.h"
+ #include "core/fxge/dib/fx_dib.h"
+ #include "third_party/base/compiler_specific.h"
+diff --color -aurBwbZE chromium/third_party/pdfium/third_party/base/allocator/partition_allocator/page_allocator_constants.h thirdparty/pdfium/third_party/base/allocator/partition_allocator/page_allocator_constants.h
+--- chromium/third_party/pdfium/third_party/base/allocator/partition_allocator/page_allocator_constants.h	2024-08-27 14:53:54.285639471 +0000
++++ thirdparty/pdfium/third_party/base/allocator/partition_allocator/page_allocator_constants.h	2023-07-28 11:24:04.000000000 +0000
+@@ -99,6 +99,6 @@
+   return ~SystemPageOffsetMask();
+ }
+ 
+-static constexpr size_t kPageMetadataShift = 5;  // 32 bytes per partition page.
++static constexpr size_t kPageMetadataShift = 5 /*5 changed to 6 to accommodate for vptr TYPEPP*/;  // 32 bytes per partition page.
+ static constexpr size_t kPageMetadataSize = 1 << kPageMetadataShift;
+ 
+ // See DecommitSystemPages(), this is not guaranteed to be synchronous on all
+diff --color -aurBwbZE chromium/third_party/protobuf/src/google/protobuf/generated_message_reflection.cc thirdparty/protobuf/src/google/protobuf/generated_message_reflection.cc
+--- chromium/third_party/protobuf/src/google/protobuf/generated_message_reflection.cc	2024-08-27 14:52:45.193399049 +0000
++++ thirdparty/protobuf/src/google/protobuf/generated_message_reflection.cc	2023-07-28 11:23:36.000000000 +0000
+@@ -1765,12 +1765,12 @@
+       if (repeated->size() == 0) {
+         retval = factory->GetPrototype(field->message_type());
+         char* tmp_ptr = const_cast<char *>(reinterpret_cast<const char *>(retval));
+-        tmp_ptr += sizeof(void *); // vptr
++        // tmp_ptr += sizeof(void *); // vptr
+         prototype = reinterpret_cast<Message*>(tmp_ptr);
+       } else {
+         retval = &repeated->Get<GenericTypeHandler<Message> >(0);
+         char* tmp_ptr = const_cast<char *>(reinterpret_cast<const char *>(retval));
+-        tmp_ptr += sizeof(void *); // vptr
++        // tmp_ptr += sizeof(void *); // vptr
+         prototype = reinterpret_cast<Message*>(tmp_ptr);
+       }
+       std::cout << (prototype) << std::endl;
+diff --color -aurBwbZE chromium/third_party/skia/include/core/SkData.h thirdparty/skia/include/core/SkData.h
+--- chromium/third_party/skia/include/core/SkData.h	2024-08-27 14:54:47.977826571 +0000
++++ thirdparty/skia/include/core/SkData.h	2023-07-28 11:24:06.000000000 +0000
+@@ -49,7 +49,7 @@
+     void* writable_data() {
+         if (fSize) {
+             // only assert we're unique if we're not empty
+-            SkASSERT(this->unique());
++            // SkASSERT(this->unique());
+         }
+         return const_cast<void*>(fPtr);
+     }
+diff --color -aurBwbZE chromium/third_party/skia/src/core/SkBlitRow_D32.cpp thirdparty/skia/src/core/SkBlitRow_D32.cpp
+--- chromium/third_party/skia/src/core/SkBlitRow_D32.cpp	2024-08-27 14:54:48.841829583 +0000
++++ thirdparty/skia/src/core/SkBlitRow_D32.cpp	2023-07-28 11:24:00.000000000 +0000
+@@ -298,7 +298,7 @@
+         blit_row_s32a_blend
+     };
+ 
+-    SkASSERT(flags < SK_ARRAY_COUNT(kProcs));
++    //SkASSERT(flags < SK_ARRAY_COUNT(kProcs));
+     flags &= SK_ARRAY_COUNT(kProcs) - 1;  // just to be safe
+ 
+     return flags == 2 ? SkOpts::blit_row_s32a_opaque
+diff --color -aurBwbZE chromium/third_party/skia/src/core/SkFlattenable.cpp thirdparty/skia/src/core/SkFlattenable.cpp
+--- chromium/third_party/skia/src/core/SkFlattenable.cpp	2024-08-27 14:54:48.853829625 +0000
++++ thirdparty/skia/src/core/SkFlattenable.cpp	2023-07-28 11:24:00.000000000 +0000
+@@ -81,7 +81,7 @@
+ void SkFlattenable::Register(const char name[], Factory factory) {
+     SkASSERT(name);
+     SkASSERT(factory);
+-    SkASSERT(gCount < (int)SK_ARRAY_COUNT(gEntries));
++    //SkASSERT(gCount < (int)SK_ARRAY_COUNT(gEntries));
+ 
+     gEntries[gCount].fName = name;
+     gEntries[gCount].fFactory = factory;
+diff --color -aurBwbZE chromium/third_party/skia/src/core/SkMask.cpp thirdparty/skia/src/core/SkMask.cpp
+--- chromium/third_party/skia/src/core/SkMask.cpp	2024-08-27 14:54:48.861829653 +0000
++++ thirdparty/skia/src/core/SkMask.cpp	2023-07-28 11:24:00.000000000 +0000
+@@ -97,7 +97,7 @@
+ };
+ 
+ static int maskFormatToShift(SkMask::Format format) {
+-    SkASSERT((unsigned)format < SK_ARRAY_COUNT(gMaskFormatToShift));
++    //SkASSERT((unsigned)format < SK_ARRAY_COUNT(gMaskFormatToShift));
+     SkASSERT(SkMask::kBW_Format != format);
+     return gMaskFormatToShift[format];
+ }
+diff --color -aurBwbZE chromium/third_party/skia/src/core/SkPathPriv.h thirdparty/skia/src/core/SkPathPriv.h
+--- chromium/third_party/skia/src/core/SkPathPriv.h	2024-08-27 14:54:48.869829681 +0000
++++ thirdparty/skia/src/core/SkPathPriv.h	2023-07-28 11:24:07.000000000 +0000
+@@ -296,7 +296,7 @@
+             0   // kDone
+         };
+ 
+-        SkASSERT(verb < SK_ARRAY_COUNT(gPtsInVerb));
++        // SkASSERT(verb < SK_ARRAY_COUNT(gPtsInVerb));
+         return gPtsInVerb[verb];
+     }
+ 
+@@ -313,7 +313,7 @@
+             0   // kDone
+         };
+ 
+-        SkASSERT(verb < SK_ARRAY_COUNT(gPtsInVerb));
++        // SkASSERT(verb < SK_ARRAY_COUNT(gPtsInVerb));
+         return gPtsInVerb[verb];
+     }
+ 
+@@ -379,7 +379,7 @@
+     static int GenIDChangeListenersCount(const SkPath&);
+ 
+     static void UpdatePathPoint(SkPath* path, int index, const SkPoint& pt) {
+-        SkASSERT(index < path->countPoints());
++        // SkASSERT(index < path->countPoints());
+         SkPathRef::Editor ed(&path->fPathRef);
+         ed.writablePoints()[index] = pt;
+         path->dirtyAfterEdit();
+@@ -491,14 +491,14 @@
+                     // Actual edge.
+                     const int pts_count = (v+2) / 2,
+                               cws_count = (v & (v-1)) / 2;
+-                    SkASSERT(pts_count == SkPathPriv::PtsInIter(v) - 1);
++                    // SkASSERT(pts_count == SkPathPriv::PtsInIter(v) - 1);
+ 
+                     fNeedsCloseLine = true;
+                     fPts           += pts_count;
+                     fConicWeights  += cws_count;
+ 
+                     SkDEBUGCODE(fIsConic = (v == SkPath::kConic_Verb);)
+-                    SkASSERT(fIsConic == (cws_count > 0));
++                    // SkASSERT(fIsConic == (cws_count > 0));
+ 
+                     bool isNewContour = fNextIsNewContour;
+                     fNextIsNewContour = false;
+diff --color -aurBwbZE chromium/third_party/skia/src/core/SkRegion_path.cpp thirdparty/skia/src/core/SkRegion_path.cpp
+--- chromium/third_party/skia/src/core/SkRegion_path.cpp	2024-08-27 14:54:48.877829709 +0000
++++ thirdparty/skia/src/core/SkRegion_path.cpp	2023-07-28 11:24:00.000000000 +0000
+@@ -253,7 +253,7 @@
+         0,  //  kClose_Verb
+         0   //  kDone_Verb
+     };
+-    SkASSERT((unsigned)verb < SK_ARRAY_COUNT(gPathVerbToInitialLastIndex));
++    // SkASSERT((unsigned)verb < SK_ARRAY_COUNT(gPathVerbToInitialLastIndex));
+     return gPathVerbToInitialLastIndex[verb];
+ }
+ 
+@@ -267,7 +267,7 @@
+         0,  //  kClose_Verb
+         0   //  kDone_Verb
+     };
+-    SkASSERT((unsigned)verb < SK_ARRAY_COUNT(gPathVerbToMaxEdges));
++    //SkASSERT((unsigned)verb < SK_ARRAY_COUNT(gPathVerbToMaxEdges));
+     return gPathVerbToMaxEdges[verb];
+ }
+ 
+diff --color -aurBwbZE chromium/third_party/skia/src/core/SkScan_Hairline.cpp thirdparty/skia/src/core/SkScan_Hairline.cpp
+--- chromium/third_party/skia/src/core/SkScan_Hairline.cpp	2024-08-27 14:54:48.881829723 +0000
++++ thirdparty/skia/src/core/SkScan_Hairline.cpp	2023-07-28 11:24:00.000000000 +0000
+@@ -250,7 +250,7 @@
+     Sk2s dt(SK_Scalar1 / lines);
+ 
+     SkPoint tmp[(1 << kMaxQuadSubdivideLevel) + 1];
+-    SkASSERT((unsigned)lines < SK_ARRAY_COUNT(tmp));
++    // SkASSERT((unsigned)lines < SK_ARRAY_COUNT(tmp));
+ 
+     tmp[0] = pts[0];
+     Sk2s A = coeff.fA;
+@@ -381,7 +381,7 @@
+     Sk2s t(0);
+ 
+     SkPoint tmp[(1 << kMaxCubicSubdivideLevel) + 1];
+-    SkASSERT((unsigned)lines < SK_ARRAY_COUNT(tmp));
++    // SkASSERT((unsigned)lines < SK_ARRAY_COUNT(tmp));
+ 
+     tmp[0] = pts[0];
+     Sk2s A = coeff.fA;
+diff --color -aurBwbZE chromium/third_party/skia/src/gpu/ccpr/GrCCPathProcessor.h thirdparty/skia/src/gpu/ccpr/GrCCPathProcessor.h
+--- chromium/third_party/skia/src/gpu/ccpr/GrCCPathProcessor.h	2024-08-27 14:54:48.937829918 +0000
++++ thirdparty/skia/src/gpu/ccpr/GrCCPathProcessor.h	2023-07-28 11:24:06.000000000 +0000
+@@ -44,7 +44,7 @@
+         void set(const GrCCPathCacheEntry&, const SkIVector& shift, const SkPMColor4f&, GrFillRule);
+     };
+ 
+-    static_assert(4 * 14 == sizeof(Instance));
++    //static_assert(4 * 14 == sizeof(Instance));
+ 
+     static sk_sp<const GrGpuBuffer> FindVertexBuffer(GrOnFlushResourceProvider*);
+     static sk_sp<const GrGpuBuffer> FindIndexBuffer(GrOnFlushResourceProvider*);
+diff --color -aurBwbZE chromium/third_party/skia/src/gpu/geometry/GrQuadBuffer.h thirdparty/skia/src/gpu/geometry/GrQuadBuffer.h
+--- chromium/third_party/skia/src/gpu/geometry/GrQuadBuffer.h	2024-08-27 14:54:48.957829988 +0000
++++ thirdparty/skia/src/gpu/geometry/GrQuadBuffer.h	2023-07-28 11:24:07.000000000 +0000
+@@ -277,7 +277,7 @@
+     SkDEBUGCODE(h->fSentinel = static_cast<unsigned>(kSentinel);)
+ 
+     // Second, the fixed-size metadata
+-    static_assert(alignof(T) == 4, "Metadata must be 4 byte aligned");
++    // static_assert(alignof(T) == 4, "Metadata must be 4 byte aligned");
+     *(this->metadata(entry)) = std::move(metadata);
+ 
+     // Then the variable blocks of x, y, and w float coordinates
+diff --color -aurBwbZE chromium/third_party/skia/src/gpu/ops/GrFillRRectOp.cpp thirdparty/skia/src/gpu/ops/GrFillRRectOp.cpp
+--- chromium/third_party/skia/src/gpu/ops/GrFillRRectOp.cpp	2024-08-27 14:54:48.981830071 +0000
++++ thirdparty/skia/src/gpu/ops/GrFillRRectOp.cpp	2023-07-28 11:24:00.000000000 +0000
+@@ -84,8 +84,8 @@
+     // These methods are used to append data of various POD types to our internal array of instance
+     // data. The actual layout of the instance buffer can vary from Op to Op.
+     template <typename T> inline T* appendInstanceData(int count) {
+-        static_assert(std::is_pod<T>::value, "");
+-        static_assert(4 == alignof(T), "");
++        //static_assert(std::is_pod<T>::value, "");
++        //static_assert(4 == alignof(T), "");
+         return reinterpret_cast<T*>(fInstanceData.push_back_n(sizeof(T) * count));
+     }
+ 
+diff --color -aurBwbZE chromium/third_party/skia/src/pathops/SkIntersections.h thirdparty/skia/src/pathops/SkIntersections.h
+--- chromium/third_party/skia/src/pathops/SkIntersections.h	2024-08-27 14:54:49.009830169 +0000
++++ thirdparty/skia/src/pathops/SkIntersections.h	2023-07-28 11:24:07.000000000 +0000
+@@ -109,6 +109,8 @@
+ 
+     bool hasT(double t) const {
+         SkASSERT(t == 0 || t == 1);
++	if(fUsed == 0)
++		return false;
+         return fUsed > 0 && (t == 0 ? fT[0][0] == 0 : fT[0][fUsed - 1] == 1);
+     }
+ 
+diff --color -aurBwbZE chromium/third_party/swiftshader/include/vulkan/vulkan.hpp thirdparty/swiftshader/include/vulkan/vulkan.hpp
+--- chromium/third_party/swiftshader/include/vulkan/vulkan.hpp	2024-08-27 14:56:02.618087000 +0000
++++ thirdparty/swiftshader/include/vulkan/vulkan.hpp	2023-07-28 11:23:53.000000000 +0000
+@@ -43843,7 +43843,7 @@
+   private:
+     VkQueue m_queue;
+   };
+-  static_assert( sizeof( VULKAN_HPP_NAMESPACE::Queue ) == sizeof( VkQueue ), "handle and wrapper have different size!" );
++  // static_assert( sizeof( VULKAN_HPP_NAMESPACE::Queue ) == sizeof( VkQueue ), "handle and wrapper have different size!" );
+
+   template <>
+   struct VULKAN_HPP_DEPRECATED("vk::cpp_type is deprecated. Use vk::CppType instead.") cpp_type<ObjectType::eQueue>
+diff --color -aurBwbZE chromium/third_party/swiftshader/src/Device/Memset.hpp thirdparty/swiftshader/src/Device/Memset.hpp
+--- chromium/third_party/swiftshader/src/Device/Memset.hpp	2024-08-27 14:56:02.626087028 +0000
++++ thirdparty/swiftshader/src/Device/Memset.hpp	2023-07-28 11:23:53.000000000 +0000
+@@ -38,7 +38,7 @@
+ 	Memset(T *object, int val)
+ 	{
+ 		static_assert(std::is_base_of<Memset<T>, T>::value, "Memset<T> must only clear the memory of a type of which it is a base class");
+-		static_assert(!std::is_polymorphic<T>::value, "Memset<T> must not be used with classes that have virtual functions");
++		// static_assert(!std::is_polymorphic<T>::value, "Memset<T> must not be used with classes that have virtual functions");
+ 		::memset(object, 0, sizeof(T));
+ 	}
+ 
+diff --color -aurBwbZE chromium/third_party/swiftshader/third_party/marl/include/marl/ticket.h thirdparty/swiftshader/third_party/marl/include/marl/ticket.h
+--- chromium/third_party/swiftshader/third_party/marl/include/marl/ticket.h	2024-08-27 14:56:04.446093382 +0000
++++ thirdparty/swiftshader/third_party/marl/include/marl/ticket.h	2023-07-28 11:24:04.000000000 +0000
+@@ -75,6 +75,7 @@
+     // F must be a function of the signature: void(Ticket&&)
+     template <typename F>
+     MARL_NO_EXPORT inline void take(size_t count, const F& f);
++    Queue(){}
+ 
+    private:
+     std::shared_ptr<Shared> shared = std::make_shared<Shared>();
+@@ -122,6 +123,7 @@
+   struct Shared {
+     marl::mutex mutex;
+     Record tail;
++    Shared(){}
+   };
+ 
+   MARL_NO_EXPORT inline Ticket(Loan<Record>&& record);

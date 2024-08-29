@@ -8,19 +8,35 @@ In our paper, we compare type++ against *four* other competitors.
 4. [EffectiveSan](https://github.com/GJDuck/EffectiveSan) [3]
 
 Comparing against LLVM-CFI has been the subject of the evaluation in
-[INSTRUCTIONS.md](./INSTRUCTIONS.md).
+[REAMDE.md](./README.md).
 
 In this document, we detail how to run type++ competitors but due to lack of
-time do not provide scripts for extracting results out of them. V
+time do not provide scripts for extracting results out of them.
 
 ## TypeSan
+Following the instructions in the [TypeSan repository](https://github.com/vusec/typesan?tab=readme-ov-file#spec-cpu2006):
 
+```bash
+sudo apt-get install autoconf bison build-essential git libtool libtool-bin
+git clone https://github.com/vusec/typesan.git
+cd typesan
+PATHSPEC="$HOME/cpu2006" ./autosetup.sh
+./run-spec-typesan.sh benchmarks
+```
 
 ## HexType
-
+```bash
+git clone git@github.com:HexHive/HexType.git
+./build.sh
+./run-spec-typesan.sh benchmarks
+```
 
 ## EffectiveSan
-
+```bash
+wget https://github.com/GJDuck/EffectiveSan/releases/download/v0.1.1-alpha/effectivesan-0.1.1-alpha.tar.xz
+tar xvfJ effectivesan-0.1.1-alpha.tar.xz
+./spec2006/run-spec2006.sh 
+```
 
 ## Paper references
 
