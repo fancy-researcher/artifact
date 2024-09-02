@@ -63,7 +63,8 @@ RUN mkdir -p ${LLVM_FOLDER} /tmp/ccache && \
     pip3 install -r requirements.txt
 
 WORKDIR ${LLVM_FOLDER}
-RUN git clone -b release/13.x --single-branch --depth 1 https://github.com/vwvw/llvm-project.git ${LLVM_FOLDER} && rm -drf ${LLVM_FOLDER}/.git
+RUN git clone -b release/13.x --single-branch --depth 1 https://github.com/llvm/llvm-project.git ${LLVM_FOLDER} && rm -drf ${LLVM_FOLDER}/.git 
+RUN rm -drf clang/examples/clang-interpreter/ && sed -i '6d' clang/examples/CMakeLists.txt && cat clang/examples/CMakeLists.txt
 COPY --chown=nbadoux:nbadoux Type++/environment_template.sh ${HOME}/environment_patched.sh
 RUN sudo apt install -qq -y texinfo
 COPY --chown=nbadoux:nbadoux Type++/*.patch fetch_repos.sh ${LLVM_FOLDER}
