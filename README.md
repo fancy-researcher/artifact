@@ -3,10 +3,8 @@
 
 This document will walk you trough replicating our results for our [paper](https://www.ndss-symposium.org/wp-content/uploads/2025-53-paper.pdf):
 `type++: Prohibiting Type Confusion with Inline Type
-Information`.
-
-@fancy-researcher update paper link!
-
+Information` (DOI:[10.14722/ndss.2025.23053](https://dx.doi.org/10.14722/ndss.2025.23053)).
+Additonally, the complete artifact can be found on [Zenodo](https://zenodo.org/records/13687049), [DOI:10.5281/zenodo.13687049](https://doi.org/10.5281/zenodo.13687049).
 
 ### Repository layout
 The repository is originally a fork of LLVM 13.0.0. The type++ code is commited
