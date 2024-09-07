@@ -10,6 +10,8 @@ source ${ENVIRONMENT_FILE}
 
 # Apply official patch
 PATCH_FOLDER=${TYPESAFETY_FOLDER}/spec_cpu/patch
+wget https://www.spec.org/cpu2006/src.alt/447.dealII.libcxx_pair.cpu2006.v1.2.tar.xz
+mv 447.dealII.libcxx_pair.cpu2006.v1.2.tar.xz $PATCH_FOLDER
 cd $CPU2006_FOLDER
 . ./shrc
 go top

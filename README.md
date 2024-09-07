@@ -30,10 +30,7 @@ The LLVM code is released under the Apache License v2.0 with LLVM Exceptions. Th
 ## Artifact Evaluation
 
 **Getting Started:**  
-If it is your first time, you should start from here.
-We provide *two* different options to evaluate our artifact.
-- Option 1: [building from source](#build-from-source), or
-- Option 2: [running on the machine](#remote-machine) we set up for you.
+If it is your first time, you should start from [building from source](#build-from-source).
 
 **Advanced Topics:**  
 These are guides to test advanced features of type++ that fall out of the
@@ -65,7 +62,7 @@ A folder, `LLVM-typepp` will be created in your `$HOME` folder.
 ```bash
 sudo apt install -qq -y python3-pip git curl tmux
 cd ${HOME}
-export REPO=https://github.com/fancy-researcher/artifact.git
+export REPO=https://github.com/HexHive/typepp.git
 export BRANCH=typepp
 export DEPTH=100
 git clone $REPO --single-branch --branch $BRANCH --depth $DEPTH LLVM-typepp
@@ -102,14 +99,10 @@ fi
 ```
 
 ### Dependencies
-Retrieve the proprietary SPEC benchmarks. Please do not distribute further.
+Retrieve the proprietary SPEC benchmarks.
 
 ```bash
-# Retrieve the SPEC benchmarks. Please do not distribute.
-cd ${HOME}
-export CPU_ISO_SERVER=http://95.217.160.226:14472/
-wget ${CPU_ISO_SERVER}/cpu2006-1.2.iso
-wget ${CPU_ISO_SERVER}/cpu2017-1.1.8.iso
+# Retrieve the SPEC benchmarks.
 
 # NOTE: I assume you have SPEC CPU 2006 and 2017 .iso in your home folder.
 # If it is not your case, make sure to copy the .iso into LLVM-typepp folder
@@ -187,17 +180,6 @@ ${HOME}/LLVM-typepp/Type++/chromium/build_typepp_stats.sh
 ```
 
 You should now have all the necessary images to run the full evaluation. Please proceed to the [Evaluation](#evaluation) section.
-
-## Remote machine
-As part of the artifact abstract, you were provided the password to the `evaluator` account on our machine. 
-You can connect to it via this command:
-```bash
-ssh evaluator@localhost -p 43028 -J evaluator@95.217.160.226:24345
-```
-Our machine already provides the `LLVM-typepp` folder in the remote user home directory, which contains the code and from which all experiments should be launched. 
-```bash
-cd ${HOME}/LLVM-typepp
-```
 
 ## Evaluation
 
